@@ -180,9 +180,9 @@ func (t Table) Build(gs Connection, walk bool) (*RTable, error) {
 			}
 		} else {
 			err := gs.Walk(oid, func(ent gosnmp.SnmpPDU) error {
-				if len(ent.Name) <= len(oid) || ent.Name[:len(oid)+1] != oid+"." {
-					return &walkError{} // break the walk
-				}
+				// if len(ent.Name) <= len(oid) || ent.Name[:len(oid)+1] != oid+"." {
+				// 	return &walkError{} // break the walk
+				// }
 
 				idx := ent.Name[len(oid):]
 				if f.OidIndexSuffix != "" {
@@ -219,10 +219,10 @@ func (t Table) Build(gs Connection, walk bool) (*RTable, error) {
 				// Our callback always wraps errors in a walkError.
 				// If this error isn't a walkError, we know it's not
 				// from the callback
-				var walkErr *walkError
-				if !errors.As(err, &walkErr) {
-					return nil, fmt.Errorf("performing bulk walk for field %s: %w", f.Name, err)
-				}
+				//var walkErr *walkError
+				//if !errors.As(err, &walkErr) {
+				return nil, fmt.Errorf("performing bulk walk for field %s: %w", f.Name, err)
+				//}
 			}
 		}
 
