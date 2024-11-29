@@ -16,6 +16,8 @@ type Replace struct {
 	Tag         string `toml:"tag"`
 	Field       string `toml:"field"`
 	Dest        string `toml:"dest"`
+	AddTag     string `toml:"destTag"`
+	TagValue string `toml:"destTagValue"`
 }
 
 type Rename struct {
@@ -33,9 +35,13 @@ func (r *Rename) Apply(in ...telegraf.Metric) []telegraf.Metric {
 				continue
 			}
 
+			
 			if replace.Measurement != "" {
 				if value := point.Name(); value == replace.Measurement {
 					point.SetName(replace.Dest)
+					if replace.AddTag != "" {
+						point.AddTag(replace.AddTag, replace.TagValue)
+					}
 				}
 				continue
 			}
@@ -55,6 +61,7 @@ func (r *Rename) Apply(in ...telegraf.Metric) []telegraf.Metric {
 				}
 				continue
 			}
+
 		}
 	}
 
