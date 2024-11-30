@@ -16,8 +16,8 @@ type Replace struct {
 	Tag         string `toml:"tag"`
 	Field       string `toml:"field"`
 	Dest        string `toml:"dest"`
-	AddTag     string `toml:"destTag"`
-	TagValue string `toml:"destTagValue"`
+	AddTag     string `toml:"addTag"`
+	TagValue string `toml:"tagValue"`
 }
 
 type Rename struct {
