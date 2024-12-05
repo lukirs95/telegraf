@@ -31,6 +31,10 @@ func (r *RavIO) gather(acc telegraf.Accumulator, system string) error {
 	if err != nil {
 		return err
 	}
+	streamStatusActive, err := newStats.StreamStatusActive()
+	if err != nil {
+		return err
+	}
 	streamConnLostPhy1, err := newStats.StreamConnectionLostRXPhy1()
 	if err != nil {
 		return err
@@ -65,6 +69,15 @@ func (r *RavIO) gather(acc telegraf.Accumulator, system string) error {
 	}
 
 	for i := range streamStatusRXPhy1 {
+		streamTags := make(map[string]string)
+		streamTags["source"] = system
+		streamTags["stream"] = fmt.Sprintf("%d", i+1)
+		streamTags["direction"] = "Rx"
+
+		streamStats := make(map[string]interface{})
+		streamStats["active"] = streamStatusActive[i]
+		acc.AddFields("stream", streamStats, streamTags)
+
 		phy1Tags := make(map[string]string)
 		phy1Tags["source"] = system
 		phy1Tags["stream"] = fmt.Sprintf("%d", i+1)

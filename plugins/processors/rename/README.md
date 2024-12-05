@@ -22,6 +22,12 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
     dest = "throughput"
 
   [[processors.rename.replace]]
+    measurement = "network_interface_1_throuput"
+    dest = "throuput"
+    addTag = "interface"
+    tagValue = 1
+
+  [[processors.rename.replace]]
     tag = "hostname"
     dest = "host"
 
