@@ -64,10 +64,10 @@ func (ewdx *EWDX4) gather(acc telegraf.Accumulator) error {
 	rx4Tags["source"] = ewdx.System
 	rx4Tags["receiver"] = "Rx4"
 	rx4RadioFields := make(map[string]interface{})
-	rx4RadioFields["divi"] = *data.M.RX3.Divi
-	rx4RadioFields["rsqi"] = *data.M.RX3.RSQI
-	rx4RadioFields["rssi"] = *data.M.RX3.RSSI
-	rx4RadioFields["frequency"] = *data.Rx3.Frequency
+	rx4RadioFields["divi"] = *data.M.RX4.Divi
+	rx4RadioFields["rsqi"] = *data.M.RX4.RSQI
+	rx4RadioFields["rssi"] = *data.M.RX4.RSSI
+	rx4RadioFields["frequency"] = *data.Rx4.Frequency
 	acc.AddFields("radio", rx4RadioFields, rx4Tags)
 
 	rx1ReceiverFields := make(map[string]interface{})
