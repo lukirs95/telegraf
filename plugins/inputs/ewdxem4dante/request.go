@@ -141,10 +141,6 @@ func (ewdx *EWDX4) gather(acc telegraf.Accumulator) error {
 			return err
 		}
 
-		if err := json.Unmarshal(resp, &tx); err != nil {
-			return fmt.Errorf("could not decode tx2 response: %w", err)
-		}
-
 		tx.Mates.Mate.Mute = new(bool)
 		tx.Mates.Mate.Type = new(string)
 		tx.Mates.Mate.Trim = new(int)
@@ -155,6 +151,10 @@ func (ewdx *EWDX4) gather(acc telegraf.Accumulator) error {
 		*tx.Mates.Mate.Trim = 0
 		*tx.Mates.Mate.Battery.Gauge = 0
 		*tx.Mates.Mate.Battery.Type = "no data"
+
+		if err := json.Unmarshal(resp, &tx); err != nil {
+			return fmt.Errorf("could not decode tx2 response: %w", err)
+		}
 
 		transmitterFields := make(map[string]interface{})
 		transmitterFields["mute"] = *tx.Mates.Mate.Mute
