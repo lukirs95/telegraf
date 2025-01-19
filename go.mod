@@ -396,7 +396,7 @@ require (
 	github.com/leodido/ragel-machinery v0.0.0-20190525184631-5f46317e436b // indirect
 	github.com/lufia/plan9stats v0.0.0-20240226150601-1dcf7310316a // indirect
 	github.com/lukirs95/gojsonrpc v0.0.0-20241125165611-fdf732123a4b // indirect
-	github.com/lukirs95/goxlinkclient v0.0.0-20241125170802-1cc6b2b31c20 // indirect
+	github.com/lukirs95/goxlinkclient v0.0.0-20250119132703-3e820567862d // indirect
 	github.com/lukirs95/websocket v0.0.0-20231006114246-534707f9bd9f // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

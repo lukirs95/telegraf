@@ -7,7 +7,7 @@ import (
 	client "github.com/lukirs95/goxlinkclient"
 )
 
-func (xlink *VideoXLink) handleUpdate( update client.XLink ) {
+func (xlink *VideoXLink) handleUpdate(update client.XLink) {
 	systemId := update.Ident()
 	if name, OK := update.GetName(); OK {
 		xlink.sysNameMap[systemId] = name
@@ -16,8 +16,8 @@ func (xlink *VideoXLink) handleUpdate( update client.XLink ) {
 
 	for _, eth := range update.GetInterfaces() {
 		ethTags := map[string]string{
-			"name": name,
-			"id": systemId,
+			"name":      name,
+			"id":        systemId,
 			"interface": eth.Ident(),
 		}
 
@@ -44,8 +44,8 @@ func (xlink *VideoXLink) handleUpdate( update client.XLink ) {
 
 	for _, decoder := range update.GetDecoders() {
 		decoderTags := map[string]string{
-			"name": name,
-			"id": systemId,
+			"name":    name,
+			"id":      systemId,
 			"decoder": decoder.Ident(),
 		}
 
@@ -67,16 +67,24 @@ func (xlink *VideoXLink) handleUpdate( update client.XLink ) {
 			decoderFields["audioEnabled"] = stat
 		}
 
+		if stat, OK := decoder.HasVideoSignal(); OK {
+			decoderFields["hasVideoSignal"] = stat
+		}
+
+		if stat, OK := decoder.HasAudioSignal(); OK {
+			decoderFields["hasAudioSignal"] = stat
+		}
+
 		decoderStat := metric.New(
-			"decoder", 
+			"decoder",
 			decoderTags, decoderFields, time.Now())
 		xlink.Buf.PushBack(decoderStat)
 	}
 
 	for _, encoder := range update.GetEncoders() {
 		encoderTags := map[string]string{
-			"name": name,
-			"id": systemId,
+			"name":    name,
+			"id":      systemId,
 			"encoder": encoder.Ident(),
 		}
 
@@ -98,8 +106,16 @@ func (xlink *VideoXLink) handleUpdate( update client.XLink ) {
 			encoderFields["audioEnabled"] = stat
 		}
 
+		if stat, OK := encoder.HasVideoSignal(); OK {
+			encoderFields["hasVideoSignal"] = stat
+		}
+
+		if stat, OK := encoder.HasAudioSignal(); OK {
+			encoderFields["hasAudioSignal"] = stat
+		}
+
 		encoderStat := metric.New(
-			"encoder", 
+			"encoder",
 			encoderTags, encoderFields, time.Now())
 		xlink.Buf.PushBack(encoderStat)
 	}
