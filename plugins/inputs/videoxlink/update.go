@@ -1,122 +1,124 @@
 package videoxlink
 
 import (
-	"time"
-
-	"github.com/influxdata/telegraf/metric"
 	client "github.com/lukirs95/goxlinkclient"
 )
 
 func (xlink *VideoXLink) handleUpdate(update client.XLink) {
 	systemId := update.Ident()
-	if name, OK := update.GetName(); OK {
-		xlink.sysNameMap[systemId] = name
+
+	var cache *updateCache
+	if c, ok := xlink.updateCache[systemId]; ok {
+		cache = c
+	} else {
+		cache = &updateCache{
+			eth:     make(map[string]*ethUpdateCache),
+			decoder: make(map[string]*decoderUpdateCache),
+			encoder: make(map[string]*encoderUpdateCache),
+		}
+		xlink.updateCache[systemId] = cache
 	}
-	name := xlink.sysNameMap[systemId]
+
+	if name, OK := update.GetName(); OK {
+		cache.name = name
+	}
 
 	for _, eth := range update.GetInterfaces() {
-		ethTags := map[string]string{
-			"name":      name,
-			"id":        systemId,
-			"interface": eth.Ident(),
+		var ethCache *ethUpdateCache
+		if c, ok := cache.eth[eth.Ident()]; ok {
+			ethCache = c
+		} else {
+			ethCache = &ethUpdateCache{}
+			cache.eth[eth.Ident()] = ethCache
 		}
-
-		ethFields := make(map[string]interface{})
 
 		if stat, OK := eth.IsEnabled(); OK {
-			ethFields["adminEnabled"] = stat
+			ethCache.adminEnabled = stat
 		}
 		if stat, OK := eth.IsLinkUp(); OK {
-			ethFields["up"] = stat
+			ethCache.up = stat
 		}
 		if stat, OK := eth.IsActive(); OK {
-			ethFields["activeUplink"] = stat
+			ethCache.activeUplink = stat
 		}
 		if stat, OK := eth.IsDefaultUplink(); OK {
-			ethFields["primaryUplink"] = stat
+			ethCache.primaryUplink = stat
 		}
 		if stat, OK := eth.IsBackupUplink(); OK {
-			ethFields["secondaryUplink"] = stat
+			ethCache.secondaryUplink = stat
 		}
 
-		xlink.Buf.PushBack(metric.New("interface", ethTags, ethFields, time.Now()))
 	}
 
 	for _, decoder := range update.GetDecoders() {
-		decoderTags := map[string]string{
-			"name":    name,
-			"id":      systemId,
-			"decoder": decoder.Ident(),
+		var decoderCache *decoderUpdateCache
+		if c, ok := cache.decoder[decoder.Ident()]; ok {
+			decoderCache = c
+		} else {
+			decoderCache = &decoderUpdateCache{}
+			cache.decoder[decoder.Ident()] = decoderCache
 		}
-
-		decoderFields := make(map[string]interface{})
 
 		if stat, OK := decoder.IsConnected(); OK {
-			decoderFields["connected"] = stat
+			decoderCache.conected = stat
 		}
 		if stat, OK := decoder.IsRunning(); OK {
-			decoderFields["running"] = stat
+			decoderCache.running = stat
 		}
 		if stat, OK := decoder.IsEnabled(); OK {
-			decoderFields["enabled"] = stat
+			decoderCache.enabled = stat
 		}
 		if stat, OK := decoder.IsVideoEnabled(); OK {
-			decoderFields["videoEnabled"] = stat
+			decoderCache.videoEnabled = stat
 		}
 		if stat, OK := decoder.IsAudioEnabled(); OK {
-			decoderFields["audioEnabled"] = stat
+			decoderCache.audioEnabled = stat
 		}
 
 		if stat, OK := decoder.HasVideoSignal(); OK {
-			decoderFields["hasVideoSignal"] = stat
+			decoderCache.hasVideoSignal = stat
 		}
 
 		if stat, OK := decoder.HasAudioSignal(); OK {
-			decoderFields["hasAudioSignal"] = stat
+			decoderCache.hasAudioSignal = stat
 		}
-
-		decoderStat := metric.New(
-			"decoder",
-			decoderTags, decoderFields, time.Now())
-		xlink.Buf.PushBack(decoderStat)
 	}
 
 	for _, encoder := range update.GetEncoders() {
-		encoderTags := map[string]string{
-			"name":    name,
-			"id":      systemId,
-			"encoder": encoder.Ident(),
+		var encoderCache *encoderUpdateCache
+		if c, ok := cache.encoder[encoder.Ident()]; ok {
+			encoderCache = c
+		} else {
+			encoderCache = &encoderUpdateCache{}
+			cache.encoder[encoder.Ident()] = encoderCache
 		}
-
-		encoderFields := make(map[string]interface{})
 
 		if stat, OK := encoder.IsConnected(); OK {
-			encoderFields["connected"] = stat
+			encoderCache.connected = stat
 		}
 		if stat, OK := encoder.IsRunning(); OK {
-			encoderFields["running"] = stat
+			encoderCache.running = stat
 		}
 		if stat, OK := encoder.IsEnabled(); OK {
-			encoderFields["enabled"] = stat
+			encoderCache.enabled = stat
 		}
 		if stat, OK := encoder.IsVideoEnabled(); OK {
-			encoderFields["videoEnabled"] = stat
+			encoderCache.videoEnabled = stat
 		}
 		if stat, OK := encoder.IsAudioEnabled(); OK {
-			encoderFields["audioEnabled"] = stat
+			encoderCache.audioEnabled = stat
 		}
 
 		if stat, OK := encoder.HasVideoSignal(); OK {
-			encoderFields["hasVideoSignal"] = stat
+			encoderCache.hasVideoSignal = stat
 		}
 
 		if stat, OK := encoder.HasAudioSignal(); OK {
-			encoderFields["hasAudioSignal"] = stat
+			encoderCache.hasAudioSignal = stat
 		}
+	}
 
-		encoderStat := metric.New(
-			"encoder",
-			encoderTags, encoderFields, time.Now())
-		xlink.Buf.PushBack(encoderStat)
+	for _, metric := range cache.Metric(systemId) {
+		xlink.Buf.PushBack(metric)
 	}
 }

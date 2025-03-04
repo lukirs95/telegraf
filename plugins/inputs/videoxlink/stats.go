@@ -7,29 +7,30 @@ import (
 	client "github.com/lukirs95/goxlinkclient"
 )
 
-func (xlink *VideoXLink) handleStats( stats client.Stats) {
+func (xlink *VideoXLink) handleStats(stats client.Stats) {
 	now := time.Now()
 	systemId := stats.Id()
-	name, ok := xlink.sysNameMap[systemId]
-	if !ok {
+	uCache, ok := xlink.updateCache[systemId]
+	if !ok || uCache.name == "" {
 		// we don't add the stats if we can't find a name for tagging
 		return
 	}
+	name := uCache.name
 
 	// SystemStats
 	systemStats := stats.SystemStats()
 	systemTags := map[string]string{
-		"id": systemId,
+		"id":   systemId,
 		"name": name,
 	}
 	systemFields := make(map[string]interface{})
 	systemFields["sysUpTime"] = systemStats.OSUpTime()
 	systemFields["cpuTemp"] = systemStats.CPUTemp()
 	systemFields["sysTemp"] = systemStats.SysTemp()
-	
+
 	systemMetric := metric.New(
-		"system", 
-		systemTags, 
+		"system",
+		systemTags,
 		systemFields,
 		now)
 	xlink.Buf.PushBack(systemMetric)
@@ -51,14 +52,14 @@ func (xlink *VideoXLink) handleStats( stats client.Stats) {
 	// Eth Stats
 	for _, eth := range stats.EthStats() {
 		ethTags := map[string]string{
-			"id": systemId,
-			"name": name,
+			"id":        systemId,
+			"name":      name,
 			"interface": eth.Ident(),
 		}
 		ethFields := make(map[string]interface{})
 		ethFields["rx"] = eth.RX()
 		ethFields["tx"] = eth.TX()
-		
+
 		ethMetric := metric.New("interface", ethTags, ethFields, now)
 		xlink.Buf.PushBack(ethMetric)
 	}
@@ -66,8 +67,8 @@ func (xlink *VideoXLink) handleStats( stats client.Stats) {
 	// Decoder Stats
 	for _, decoder := range stats.DecoderStats() {
 		decTags := map[string]string{
-			"id": systemId,
-			"name": name,
+			"id":      systemId,
+			"name":    name,
 			"decoder": decoder.Ident(),
 		}
 
@@ -86,15 +87,15 @@ func (xlink *VideoXLink) handleStats( stats client.Stats) {
 		decFields["dDropped"] = decoder.VideoDDrop()
 		decFields["dCorrected"] = decoder.VideoDCorr()
 		decFields["rMissing"] = decoder.VideoRMissing()
-		
+
 		decMetric := metric.New("decoder", decTags, decFields, now)
 		xlink.Buf.PushBack(decMetric)
 	}
 
 	for _, encoder := range stats.EncoderStats() {
 		encTags := map[string]string{
-			"id": systemId,
-			"name": name,
+			"id":      systemId,
+			"name":    name,
 			"encoder": encoder.Ident(),
 		}
 

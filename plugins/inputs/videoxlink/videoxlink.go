@@ -7,21 +7,23 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/inputs/videoxlink/helper"
+	xlinkclient "github.com/lukirs95/goxlinkclient"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
 type VideoXLink struct {
-	Systems []string `toml:"systems"`
-	sysNameMap map[string]string
+	Systems     []string `toml:"systems"`
+	updateCache map[string]*updateCache
+	statsCache  map[string]*xlinkclient.Stats
 
 	Password string `toml:"password"`
 
 	Log telegraf.Logger `toml:"-"`
 
 	wgMu sync.Mutex
-	wg sync.WaitGroup
+	wg   sync.WaitGroup
 	stop func()
 
 	Buf *helper.RingBuffer[telegraf.Metric]
@@ -36,6 +38,13 @@ func (x *VideoXLink) Init() error {
 }
 
 func (m *VideoXLink) Gather(acc telegraf.Accumulator) error {
+	// get at least last update state
+	for id, system := range m.updateCache {
+		for _, metric := range system.Metric(id) {
+			m.Buf.PushBack(metric)
+		}
+	}
+
 	// read out and empty buffer
 	tmpBuf := make([]telegraf.Metric, 0)
 	for fill := m.Buf.Size(); fill != 0; fill-- {
@@ -54,8 +63,9 @@ func (m *VideoXLink) Gather(acc telegraf.Accumulator) error {
 func init() {
 	inputs.Add("videoxlink", func() telegraf.Input {
 		return &VideoXLink{
-			Buf: helper.NewRingBuffer[telegraf.Metric](),
-			sysNameMap: make(map[string]string),
+			Buf:         helper.NewRingBuffer[telegraf.Metric](),
+			updateCache: make(map[string]*updateCache),
+			statsCache:  make(map[string]*xlinkclient.Stats),
 		}
 	})
 }
