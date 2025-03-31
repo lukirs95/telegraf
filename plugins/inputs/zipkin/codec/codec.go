@@ -54,10 +54,10 @@ type Endpoint interface {
 type defaultEndpoint struct{}
 
 // Host returns 0.0.0.0; used when the host is unknown
-func (d *defaultEndpoint) Host() string { return "0.0.0.0" }
+func (*defaultEndpoint) Host() string { return "0.0.0.0" }
 
 // Name returns "unknown" when an endpoint doesn't exist
-func (d *defaultEndpoint) Name() string { return DefaultServiceName }
+func (*defaultEndpoint) Name() string { return DefaultServiceName }
 
 // MicroToTime converts zipkin's native time of microseconds into time.Time
 func MicroToTime(micro int64) time.Time {
@@ -133,9 +133,9 @@ func NewBinaryAnnotations(annotations []BinaryAnnotation, endpoint Endpoint) []t
 	return formatted
 }
 
-func minMax(span Span) (time.Time, time.Time) {
-	low := now().UTC()
-	high := time.Time{}.UTC()
+func minMax(span Span) (low, high time.Time) {
+	low = now().UTC()
+	high = time.Time{}.UTC()
 	for _, annotation := range span.Annotations() {
 		ts := annotation.Timestamp()
 		if !ts.IsZero() && ts.Before(low) {

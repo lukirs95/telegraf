@@ -17,9 +17,7 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
-type statServer struct{}
-
-func (s statServer) serverSocket(l net.Listener) {
+func serverSocket(l net.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -136,23 +134,24 @@ func TestHaproxyGeneratesMetricsUsingSocket(t *testing.T) {
 	var randomNumber int64
 	var sockets [5]net.Listener
 
-	_globmask := filepath.Join(os.TempDir(), "test-haproxy*.sock")
-	_badmask := filepath.Join(os.TempDir(), "test-fail-haproxy*.sock")
+	// The Maximum length of the socket path is 104/108 characters, path created with t.TempDir() is too long for some cases
+	// (it combines test name with subtest name and some random numbers in the path). Therefore, in this case, it is safer to stick with `os.MkdirTemp()`.
+	//nolint:usetesting // Ignore "os.TempDir() could be replaced by t.TempDir() in TestHaproxyGeneratesMetricsUsingSocket" finding.
+	tempDir := os.TempDir()
+	_globmask := filepath.Join(tempDir, "test-haproxy*.sock")
+	_badmask := filepath.Join(tempDir, "test-fail-haproxy*.sock")
 
 	for i := 0; i < 5; i++ {
 		require.NoError(t, binary.Read(rand.Reader, binary.LittleEndian, &randomNumber))
-		sockname := filepath.Join(os.TempDir(), fmt.Sprintf("test-haproxy%d.sock", randomNumber))
+		sockname := filepath.Join(tempDir, fmt.Sprintf("test-haproxy%d.sock", randomNumber))
 
 		sock, err := net.Listen("unix", sockname)
-		if err != nil {
-			t.Fatal("Cannot initialize socket ")
-		}
+		require.NoError(t, err, "Cannot initialize socket")
 
 		sockets[i] = sock
 		defer sock.Close() //nolint:revive,gocritic // done on purpose, closing will be executed properly
 
-		s := statServer{}
-		go s.serverSocket(sock)
+		go serverSocket(sock)
 	}
 
 	r := &HAProxy{
@@ -191,8 +190,7 @@ func TestHaproxyGeneratesMetricsUsingTcp(t *testing.T) {
 	}
 	defer l.Close()
 
-	s := statServer{}
-	go s.serverSocket(l)
+	go serverSocket(l)
 
 	r := &HAProxy{
 		Servers: []string{"tcp://" + l.Addr().String()},

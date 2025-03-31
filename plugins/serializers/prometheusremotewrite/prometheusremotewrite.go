@@ -46,10 +46,10 @@ func (s *Serializer) SerializeBatch(metrics []telegraf.Metric) ([]byte, error) {
 		var metrickey MetricKey
 		var promts prompb.TimeSeries
 		for _, field := range metric.FieldList() {
-			metricName := prometheus.MetricName(metric.Name(), field.Key, metric.Type())
-			metricName, ok := prometheus.SanitizeMetricName(metricName)
+			rawName := prometheus.MetricName(metric.Name(), field.Key, metric.Type())
+			metricName, ok := prometheus.SanitizeMetricName(rawName)
 			if !ok {
-				traceAndKeepErr("failed to parse metric name %q", metricName)
+				traceAndKeepErr("failed to parse metric name %q", rawName)
 				continue
 			}
 
@@ -350,16 +350,8 @@ func (sl sortableLabels) Swap(i, j int) {
 
 func init() {
 	serializers.Add("prometheusremotewrite",
-		func() serializers.Serializer {
+		func() telegraf.Serializer {
 			return &Serializer{}
 		},
 	)
-}
-
-// InitFromConfig is a compatibility function to construct the parser the old way
-func (s *Serializer) InitFromConfig(cfg *serializers.Config) error {
-	s.SortMetrics = cfg.PrometheusSortMetrics
-	s.StringAsLabel = cfg.PrometheusStringAsLabel
-
-	return nil
 }

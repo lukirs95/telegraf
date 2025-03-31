@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/influxdata/influxdb-observability/otel2influx"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -24,7 +25,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/influxdata/influxdb-observability/otel2influx"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -44,7 +44,7 @@ func TestOpenTelemetry(t *testing.T) {
 	defer plugin.Stop()
 
 	// Setup the OpenTelemetry exporter
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	exporter, err := otlpmetricgrpc.New(ctx,
@@ -196,7 +196,7 @@ func TestCases(t *testing.T) {
 
 			// Send all data to the plugin
 			addr := plugin.listener.Addr().String()
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 
 			grpcClient, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))

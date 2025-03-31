@@ -2,7 +2,6 @@ package opensearch_query
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,13 +11,14 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/opensearch-project/opensearch-go/v2/opensearchutil"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go/wait"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/opensearch-project/opensearch-go/v2/opensearchutil"
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -608,7 +608,7 @@ func setupIntegrationTest(t *testing.T, image string) (*testutil.Container, *Ope
 		}
 
 		e = indexer.Add(
-			context.Background(),
+			t.Context(),
 			opensearchutil.BulkIndexerItem{
 				Index:  testindex,
 				Action: "index",
@@ -623,7 +623,7 @@ func setupIntegrationTest(t *testing.T, image string) (*testutil.Container, *Ope
 		return &container, o, err
 	}
 
-	if err := indexer.Close(context.Background()); err != nil {
+	if err := indexer.Close(t.Context()); err != nil {
 		return &container, o, err
 	}
 
@@ -674,18 +674,18 @@ func TestOpensearchQueryIntegration(t *testing.T) {
 }
 
 func TestMetricAggregationMarshal(t *testing.T) {
-	agg := &MetricAggregationRequest{}
-	err := agg.AddAggregation("sum_taxful_total_price", "sum", "taxful_total_price")
+	agg := &metricAggregationRequest{}
+	err := agg.addAggregation("sum_taxful_total_price", "sum", "taxful_total_price")
 	require.NoError(t, err)
 
 	_, err = json.Marshal(agg)
 	require.NoError(t, err)
 
-	bucket := &BucketAggregationRequest{}
-	err = bucket.AddAggregation("terms_by_currency", "terms", "currency")
+	bucket := &bucketAggregationRequest{}
+	err = bucket.addAggregation("terms_by_currency", "terms", "currency")
 	require.NoError(t, err)
 
-	bucket.AddNestedAggregation("terms_by_currency", agg)
+	bucket.addNestedAggregation("terms_by_currency", agg)
 	_, err = json.Marshal(bucket)
 	require.NoError(t, err)
 }

@@ -9,10 +9,10 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	receiver "github.com/logzio/azure-monitor-metrics-receiver"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	receiver "github.com/logzio/azure-monitor-metrics-receiver"
 )
 
 type AzureMonitor struct {
@@ -58,7 +58,7 @@ type azureClientsCreator interface {
 //go:embed sample.conf
 var sampleConfig string
 
-func (am *AzureMonitor) SampleConfig() string {
+func (*AzureMonitor) SampleConfig() string {
 	return sampleConfig
 }
 
@@ -170,7 +170,7 @@ func (am *AzureMonitor) setReceiver() error {
 	return err
 }
 
-func (acm *azureClientsManager) createAzureClients(
+func (*azureClientsManager) createAzureClients(
 	subscriptionID, clientID, clientSecret, tenantID string,
 	clientOptions azcore.ClientOptions,
 ) (*receiver.AzureClients, error) {

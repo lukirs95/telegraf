@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/influxdata/tail"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
@@ -29,7 +30,7 @@ func newInfluxParser() (telegraf.Parser, error) {
 	return parser, nil
 }
 
-func NewTestTail() *Tail {
+func newTestTail() *Tail {
 	offsetsMutex.Lock()
 	offsetsCopy := make(map[string]int64, len(offsets))
 	for k, v := range offsets {
@@ -43,7 +44,6 @@ func NewTestTail() *Tail {
 	}
 
 	return &Tail{
-		FromBeginning:       false,
 		MaxUndeliveredLines: 1000,
 		offsets:             offsetsCopy,
 		WatchMethod:         watchMethod,
@@ -62,9 +62,9 @@ cpu usage_idle=100
 
 	logger := &testutil.CaptureLogger{}
 
-	tt := NewTestTail()
+	tt := newTestTail()
 	tt.Log = logger
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{tmpfile}
 	tt.SetParserFunc(newInfluxParser)
 	require.NoError(t, tt.Init())
@@ -86,9 +86,9 @@ func TestColoredLine(t *testing.T) {
 	tmpfile := filepath.Join(t.TempDir(), "input.csv")
 	require.NoError(t, os.WriteFile(tmpfile, []byte(content), 0600))
 
-	tt := NewTestTail()
+	tt := newTestTail()
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Filters = []string{"ansi_color"}
 	tt.Files = []string{tmpfile}
 	tt.SetParserFunc(newInfluxParser)
@@ -116,9 +116,9 @@ func TestTailDosLineEndings(t *testing.T) {
 	tmpfile := filepath.Join(t.TempDir(), "input.csv")
 	require.NoError(t, os.WriteFile(tmpfile, []byte(content), 0600))
 
-	tt := NewTestTail()
+	tt := newTestTail()
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{tmpfile}
 	tt.SetParserFunc(newInfluxParser)
 	require.NoError(t, tt.Init())
@@ -144,13 +144,13 @@ func TestGrokParseLogFilesWithMultiline(t *testing.T) {
 	d, err := time.ParseDuration("100s")
 	require.NoError(t, err)
 	duration := config.Duration(d)
-	tt := NewTail()
+	tt := newTail()
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{filepath.Join("testdata", "test_multiline.log")}
-	tt.MultilineConfig = MultilineConfig{
+	tt.MultilineConfig = multilineConfig{
 		Pattern:        `^[^\[]`,
-		MatchWhichLine: Previous,
+		MatchWhichLine: previous,
 		InvertMatch:    false,
 		Timeout:        &duration,
 	}
@@ -194,10 +194,9 @@ func TestGrokParseLogFilesWithMultiline(t *testing.T) {
 }
 
 func TestGrokParseLogFilesWithMultilineTimeout(t *testing.T) {
-	tmpfile, err := os.CreateTemp("", "")
+	tmpfile, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
 	defer tmpfile.Close()
-	defer os.Remove(tmpfile.Name())
 
 	// This seems necessary in order to get the test to read the following lines.
 	_, err = tmpfile.WriteString("[04/Jun/2016:12:41:48 +0100] INFO HelloExample: This is fluff\r\n")
@@ -207,14 +206,14 @@ func TestGrokParseLogFilesWithMultilineTimeout(t *testing.T) {
 	// set tight timeout for tests
 	d := 10 * time.Millisecond
 	duration := config.Duration(d)
-	tt := NewTail()
+	tt := newTail()
 
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{tmpfile.Name()}
-	tt.MultilineConfig = MultilineConfig{
+	tt.MultilineConfig = multilineConfig{
 		Pattern:        `^[^\[]`,
-		MatchWhichLine: Previous,
+		MatchWhichLine: previous,
 		InvertMatch:    false,
 		Timeout:        &duration,
 	}
@@ -259,13 +258,13 @@ func TestGrokParseLogFilesWithMultilineTailerCloseFlushesMultilineBuffer(t *test
 	// we make sure the timeout won't kick in
 	duration := config.Duration(100 * time.Second)
 
-	tt := NewTestTail()
+	tt := newTestTail()
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{filepath.Join("testdata", "test_multiline.log")}
-	tt.MultilineConfig = MultilineConfig{
+	tt.MultilineConfig = multilineConfig{
 		Pattern:        `^[^\[]`,
-		MatchWhichLine: Previous,
+		MatchWhichLine: previous,
 		InvertMatch:    false,
 		Timeout:        &duration,
 	}
@@ -312,9 +311,9 @@ cpu,42
 	tmpfile := filepath.Join(t.TempDir(), "input.csv")
 	require.NoError(t, os.WriteFile(tmpfile, []byte(content), 0600))
 
-	plugin := NewTestTail()
+	plugin := newTestTail()
 	plugin.Log = testutil.Logger{}
-	plugin.FromBeginning = true
+	plugin.InitialReadOffset = "beginning"
 	plugin.Files = []string{tmpfile}
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
 		parser := csv.Parser{
@@ -386,9 +385,9 @@ skip2,mem,100
 			time.Unix(0, 0)),
 	}
 
-	plugin := NewTestTail()
+	plugin := newTestTail()
 	plugin.Log = testutil.Logger{}
-	plugin.FromBeginning = true
+	plugin.InitialReadOffset = "beginning"
 	plugin.Files = []string{tmpfile}
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
 		parser := csv.Parser{
@@ -444,9 +443,9 @@ func TestMultipleMetricsOnFirstLine(t *testing.T) {
 			time.Unix(0, 0)),
 	}
 
-	plugin := NewTestTail()
+	plugin := newTestTail()
 	plugin.Log = testutil.Logger{}
-	plugin.FromBeginning = true
+	plugin.InitialReadOffset = "beginning"
 	plugin.Files = []string{tmpfile}
 	plugin.PathTag = "customPathTagMyFile"
 	plugin.SetParserFunc(func() (telegraf.Parser, error) {
@@ -526,7 +525,7 @@ func TestCharacterEncoding(t *testing.T) {
 	tests := []struct {
 		name              string
 		testfiles         string
-		fromBeginning     bool
+		initialReadOffset string
 		characterEncoding string
 		offset            int64
 		expected          []telegraf.Metric
@@ -534,7 +533,7 @@ func TestCharacterEncoding(t *testing.T) {
 		{
 			name:              "utf-8",
 			testfiles:         "cpu-utf-8.influx",
-			fromBeginning:     true,
+			initialReadOffset: "beginning",
 			characterEncoding: "utf-8",
 			expected:          full,
 		},
@@ -548,7 +547,7 @@ func TestCharacterEncoding(t *testing.T) {
 		{
 			name:              "utf-16le",
 			testfiles:         "cpu-utf-16le.influx",
-			fromBeginning:     true,
+			initialReadOffset: "beginning",
 			characterEncoding: "utf-16le",
 			expected:          full,
 		},
@@ -562,7 +561,7 @@ func TestCharacterEncoding(t *testing.T) {
 		{
 			name:              "utf-16be",
 			testfiles:         "cpu-utf-16be.influx",
-			fromBeginning:     true,
+			initialReadOffset: "beginning",
 			characterEncoding: "utf-16be",
 			expected:          full,
 		},
@@ -571,7 +570,7 @@ func TestCharacterEncoding(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			plugin := &Tail{
 				Files:               []string{filepath.Join("testdata", tt.testfiles)},
-				FromBeginning:       tt.fromBeginning,
+				InitialReadOffset:   tt.initialReadOffset,
 				MaxUndeliveredLines: 1000,
 				Log:                 testutil.Logger{},
 				CharacterEncoding:   tt.characterEncoding,
@@ -605,17 +604,16 @@ func TestCharacterEncoding(t *testing.T) {
 }
 
 func TestTailEOF(t *testing.T) {
-	tmpfile, err := os.CreateTemp("", "")
+	tmpfile, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
 	defer tmpfile.Close()
-	defer os.Remove(tmpfile.Name())
 	_, err = tmpfile.WriteString("cpu usage_idle=100\r\n")
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Sync())
 
-	tt := NewTestTail()
+	tt := newTestTail()
 	tt.Log = testutil.Logger{}
-	tt.FromBeginning = true
+	tt.InitialReadOffset = "beginning"
 	tt.Files = []string{tmpfile.Name()}
 	tt.SetParserFunc(newInfluxParser)
 	require.NoError(t, tt.Init())
@@ -645,10 +643,9 @@ func TestTailEOF(t *testing.T) {
 
 func TestCSVBehavior(t *testing.T) {
 	// Prepare the input file
-	input, err := os.CreateTemp("", "")
+	input, err := os.CreateTemp(t.TempDir(), "")
 	require.NoError(t, err)
 	defer input.Close()
-	defer os.Remove(input.Name())
 	// Write header
 	_, err = input.WriteString("a,b\n")
 	require.NoError(t, err)
@@ -667,7 +664,7 @@ func TestCSVBehavior(t *testing.T) {
 	// Setup the plugin
 	plugin := &Tail{
 		Files:               []string{input.Name()},
-		FromBeginning:       true,
+		InitialReadOffset:   "beginning",
 		MaxUndeliveredLines: 1000,
 		offsets:             make(map[string]int64, 0),
 		PathTag:             "path",
@@ -799,4 +796,237 @@ func TestStatePersistence(t *testing.T) {
 	actualState, ok := pi.GetState().(map[string]int64)
 	require.True(t, ok, "state is not a map[string]int64")
 	require.Equal(t, expectedState, actualState)
+}
+
+func TestGetSeekInfo(t *testing.T) {
+	tests := []struct {
+		name     string
+		offsets  map[string]int64
+		initial  string
+		expected *tail.SeekInfo
+	}{
+		{
+			name:    "beginning without offset",
+			initial: "beginning",
+			expected: &tail.SeekInfo{
+				Whence: 0,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "beginning with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "beginning",
+			expected: &tail.SeekInfo{
+				Whence: 0,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "end without offset",
+			initial: "end",
+			expected: &tail.SeekInfo{
+				Whence: 2,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "end with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "end",
+			expected: &tail.SeekInfo{
+				Whence: 2,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "saved-or-beginning without offset",
+			initial: "saved-or-beginning",
+			expected: &tail.SeekInfo{
+				Whence: 0,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "saved-or-beginning with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "saved-or-beginning",
+			expected: &tail.SeekInfo{
+				Whence: 0,
+				Offset: 100,
+			},
+		},
+		{
+			name:    "saved-or-end without offset",
+			initial: "saved-or-end",
+			expected: &tail.SeekInfo{
+				Whence: 2,
+				Offset: 0,
+			},
+		},
+		{
+			name:    "saved-or-end with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "saved-or-end",
+			expected: &tail.SeekInfo{
+				Whence: 0,
+				Offset: 100,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Tail{
+				MaxUndeliveredLines: 1000,
+				InitialReadOffset:   tt.initial,
+				PathTag:             "path",
+				Log:                 &testutil.Logger{},
+			}
+			require.NoError(t, plugin.Init())
+			plugin.offsets = tt.offsets
+
+			seekInfo, err := plugin.getSeekInfo("test.log")
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, seekInfo)
+		})
+	}
+}
+
+func TestGetSeekInfoForPipes(t *testing.T) {
+	tests := []struct {
+		name    string
+		offsets map[string]int64
+		initial string
+	}{
+		{
+			name:    "beginning without offset",
+			initial: "beginning",
+		},
+		{
+			name:    "beginning with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "beginning",
+		},
+		{
+			name:    "end without offset",
+			initial: "end",
+		},
+		{
+			name:    "end with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "end",
+		},
+		{
+			name:    "saved-or-end without offset",
+			initial: "saved-or-end",
+		},
+		{
+			name:    "saved-or-end with offset",
+			offsets: map[string]int64{"test.log": 100},
+			initial: "saved-or-end",
+		},
+		{
+			name:    "saved-or-beginning without offset",
+			initial: "saved-or-beginning",
+		},
+		{
+			name:    "saved-or-beginning with offset",
+			initial: "saved-or-beginning",
+			offsets: map[string]int64{"test.log": 100},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Tail{
+				InitialReadOffset:   tt.initial,
+				MaxUndeliveredLines: 1000,
+				PathTag:             "path",
+				Pipe:                true,
+				Log:                 &testutil.Logger{},
+			}
+			require.NoError(t, plugin.Init())
+			plugin.offsets = tt.offsets
+
+			seekInfo, err := plugin.getSeekInfo("test.log")
+			require.NoError(t, err)
+			require.Nil(t, seekInfo)
+		})
+	}
+}
+
+func TestInvalidInitialReadOffset(t *testing.T) {
+	plugin := &Tail{
+		InitialReadOffset:   "invalid",
+		MaxUndeliveredLines: 1000,
+		PathTag:             "path",
+		Log:                 &testutil.Logger{},
+	}
+	require.ErrorContains(t, plugin.Init(), "invalid 'initial_read_offset' setting")
+}
+
+func TestSetInitialValueForInitialReadOffset(t *testing.T) {
+	tests := []struct {
+		name              string
+		InitialReadOffset string
+		FromBeginning     bool
+		expected          string
+	}{
+		{
+			name:          "Set InitialReadOffset to beginning when from_beginning set to true and initial_read_offset not set",
+			FromBeginning: true,
+			expected:      "beginning",
+		},
+		{
+			name:     "Set InitialReadOffset to saved-or-end when from_beginning set to false and initial_read_offset not set",
+			expected: "saved-or-end",
+		},
+		{
+			name:              "Ignore from_beginning when initial_read_offset is set",
+			InitialReadOffset: "end",
+			expected:          "end",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tt := newTail()
+			tt.FromBeginning = test.FromBeginning
+			tt.InitialReadOffset = test.InitialReadOffset
+			require.NoError(t, tt.Init())
+			require.Equal(t, test.expected, tt.InitialReadOffset)
+		})
+	}
+}
+
+func TestInitInitialReadOffset(t *testing.T) {
+	tests := []struct {
+		name              string
+		InitialReadOffset string
+		FromBeginning     bool
+		expected          string
+	}{
+		{
+			name:          "Set InitialReadOffset to beginning when from_beginning set to true and initial_read_offset not set",
+			FromBeginning: true,
+			expected:      "beginning",
+		},
+		{
+			name:              "Ignore from_beginning when initial_read_offset is set",
+			FromBeginning:     true,
+			InitialReadOffset: "end",
+			expected:          "end",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tt := newTail()
+			tt.FromBeginning = test.FromBeginning
+			tt.InitialReadOffset = test.InitialReadOffset
+			require.NoError(t, tt.Init())
+			require.Equal(t, test.expected, tt.InitialReadOffset)
+		})
+	}
 }

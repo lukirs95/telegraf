@@ -380,7 +380,7 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["vlan_priority"] = l.Priority
 			fields["vlan_drop_eligible"] = l.DropEligible
 		case *layers.IPv4:
-			fields["ip_version"] = l.Version
+			fields["ip_version"] = decodePacketIPVersion(l.Version)
 			fields["ipv4_inet_header_len"] = l.IHL
 			fields["src_tos"] = l.TOS
 			fields["ipv4_total_len"] = l.Length
@@ -391,19 +391,20 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["dst"] = l.DstIP.String()
 
 			flags := []byte("........")
-			switch {
-			case l.Flags&layers.IPv4EvilBit > 0:
+			if l.Flags&layers.IPv4EvilBit > 0 {
 				flags[7] = byte('E')
-			case l.Flags&layers.IPv4DontFragment > 0:
+			}
+			if l.Flags&layers.IPv4DontFragment > 0 {
 				flags[6] = byte('D')
-			case l.Flags&layers.IPv4MoreFragments > 0:
+			}
+			if l.Flags&layers.IPv4MoreFragments > 0 {
 				flags[5] = byte('M')
 			}
 			fields["fragment_flags"] = string(flags)
 			fields["fragment_offset"] = l.FragOffset
 			fields["ip_total_len"] = l.Length
 		case *layers.IPv6:
-			fields["ip_version"] = l.Version
+			fields["ip_version"] = decodePacketIPVersion(l.Version)
 			fields["ipv6_total_len"] = l.Length
 			fields["ttl"] = l.HopLimit
 			fields["protocol"] = mapL4Proto(uint8(l.NextHeader))
@@ -418,22 +419,28 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["tcp_window_size"] = l.Window
 			fields["tcp_urgent_ptr"] = l.Urgent
 			flags := []byte("........")
-			switch {
-			case l.FIN:
+			if l.FIN {
 				flags[7] = byte('F')
-			case l.SYN:
+			}
+			if l.SYN {
 				flags[6] = byte('S')
-			case l.RST:
+			}
+			if l.RST {
 				flags[5] = byte('R')
-			case l.PSH:
+			}
+			if l.PSH {
 				flags[4] = byte('P')
-			case l.ACK:
+			}
+			if l.ACK {
 				flags[3] = byte('A')
-			case l.URG:
+			}
+			if l.URG {
 				flags[2] = byte('U')
-			case l.ECE:
+			}
+			if l.ECE {
 				flags[1] = byte('E')
-			case l.CWR:
+			}
+			if l.CWR {
 				flags[0] = byte('C')
 			}
 			fields["tcp_flags"] = string(flags)

@@ -33,6 +33,7 @@ var sampleConfig string
 // Stackdriver is the Google Stackdriver config info.
 type Stackdriver struct {
 	Project              string            `toml:"project"`
+	QuotaProject         string            `toml:"quota_project"`
 	Namespace            string            `toml:"namespace"`
 	ResourceType         string            `toml:"resource_type"`
 	ResourceLabels       map[string]string `toml:"resource_labels"`
@@ -136,9 +137,19 @@ func (s *Stackdriver) Connect() error {
 
 	s.ResourceLabels["project_id"] = s.Project
 
+	// Define client options, starting with the user agent
+	options := []option.ClientOption{
+		option.WithUserAgent(internal.ProductToken()),
+	}
+
+	if s.QuotaProject != "" {
+		options = append(options, option.WithQuotaProject(s.QuotaProject))
+		s.Log.Infof("Using QuotaProject %s for quota attribution", s.QuotaProject)
+	}
+
 	if s.client == nil {
 		ctx := context.Background()
-		client, err := monitoring.NewMetricClient(ctx, option.WithUserAgent(internal.ProductToken()))
+		client, err := monitoring.NewMetricClient(ctx, options...)
 		if err != nil {
 			return err
 		}
@@ -251,7 +262,7 @@ func (s *Stackdriver) sendBatch(batch []telegraf.Metric) error {
 		}
 
 		if m.Type() == telegraf.Histogram {
-			value, err := s.buildHistogram(m)
+			value, err := buildHistogram(m)
 			if err != nil {
 				s.Log.Errorf("Unable to build distribution from metric %s: %s", m, err)
 				continue
@@ -462,7 +473,7 @@ func getStackdriverIntervalEndpoints(
 	m telegraf.Metric,
 	f *telegraf.Field,
 	cc *counterCache,
-) (*timestamppb.Timestamp, *timestamppb.Timestamp) {
+) (start, end *timestamppb.Timestamp) {
 	endTime := timestamppb.New(m.Time())
 	var startTime *timestamppb.Timestamp
 	if kind == metricpb.MetricDescriptor_CUMULATIVE {
@@ -563,7 +574,7 @@ func (s *Stackdriver) getStackdriverTypedValue(value interface{}) (*monitoringpb
 	}
 }
 
-func (s *Stackdriver) buildHistogram(m telegraf.Metric) (*monitoringpb.TypedValue, error) {
+func buildHistogram(m telegraf.Metric) (*monitoringpb.TypedValue, error) {
 	sumInter, ok := m.GetField("sum")
 	if !ok {
 		return nil, errors.New("no sum field present")

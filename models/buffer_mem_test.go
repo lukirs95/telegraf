@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf/metric"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/metric"
 )
 
 func TestMemoryBufferAcceptCallsMetricAccept(t *testing.T) {
@@ -24,8 +25,9 @@ func TestMemoryBufferAcceptCallsMetricAccept(t *testing.T) {
 		},
 	}
 	buf.Add(mm, mm, mm)
-	batch := buf.Batch(2)
-	buf.Accept(batch)
+	tx := buf.BeginTransaction(2)
+	tx.AcceptAll()
+	buf.EndTransaction(tx)
 	require.Equal(t, 2, accept)
 }
 

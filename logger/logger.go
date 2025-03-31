@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -195,6 +196,8 @@ type Config struct {
 	LogWithTimezone string
 	// Logger instance name
 	InstanceName string
+	// Structured logging message key
+	StructuredLogMessageKey string
 
 	// internal  log-level
 	logLevel telegraf.LogLevel
@@ -287,7 +290,15 @@ func RedirectLogging(w io.Writer) {
 }
 
 func CloseLogging() error {
-	return instance.close()
+	if instance == nil {
+		return nil
+	}
+
+	if err := instance.close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return err
+	}
+
+	return nil
 }
 
 func init() {

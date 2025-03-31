@@ -51,15 +51,15 @@ type mockServer struct {
 	grpcServer *grpc.Server
 }
 
-func (s *mockServer) Capabilities(context.Context, *gnmi.CapabilityRequest) (*gnmi.CapabilityResponse, error) {
+func (*mockServer) Capabilities(context.Context, *gnmi.CapabilityRequest) (*gnmi.CapabilityResponse, error) {
 	return nil, nil
 }
 
-func (s *mockServer) Get(context.Context, *gnmi.GetRequest) (*gnmi.GetResponse, error) {
+func (*mockServer) Get(context.Context, *gnmi.GetRequest) (*gnmi.GetResponse, error) {
 	return nil, nil
 }
 
-func (s *mockServer) Set(context.Context, *gnmi.SetRequest) (*gnmi.SetResponse, error) {
+func (*mockServer) Set(context.Context, *gnmi.SetRequest) (*gnmi.SetResponse, error) {
 	return nil, nil
 }
 
@@ -779,9 +779,10 @@ func TestNotification(t *testing.T) {
 		{
 			name: "issue #12257 Sonic",
 			plugin: &GNMI{
-				Log:      testutil.Logger{},
-				Encoding: "proto",
-				Redial:   config.Duration(1 * time.Second),
+				Log:                           testutil.Logger{},
+				Encoding:                      "proto",
+				Redial:                        config.Duration(1 * time.Second),
+				EnforceFirstNamespaceAsOrigin: true,
 				Subscriptions: []subscription{
 					{
 						Name:             "temperature",
@@ -910,10 +911,11 @@ func TestNotification(t *testing.T) {
 		{
 			name: "Juniper Extension",
 			plugin: &GNMI{
-				Log:            testutil.Logger{},
-				Encoding:       "proto",
-				VendorSpecific: []string{"juniper_header"},
-				Redial:         config.Duration(1 * time.Second),
+				Log:                           testutil.Logger{},
+				Encoding:                      "proto",
+				VendorSpecific:                []string{"juniper_header"},
+				Redial:                        config.Duration(1 * time.Second),
+				EnforceFirstNamespaceAsOrigin: true,
 				Subscriptions: []subscription{
 					{
 						Name:             "type",
@@ -1105,7 +1107,12 @@ func TestCases(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register the plugin
-	inputs.Add("gnmi", newGNMI)
+	inputs.Add("gnmi", func() telegraf.Input {
+		return &GNMI{
+			Redial:                        config.Duration(10 * time.Second),
+			EnforceFirstNamespaceAsOrigin: true,
+		}
+	})
 
 	for _, f := range folders {
 		// Only handle folders
@@ -1158,12 +1165,6 @@ func TestCases(t *testing.T) {
 
 			// Prepare the server response
 			responseFunction := func(server gnmi.GNMI_SubscribeServer) error {
-				sync := &gnmi.SubscribeResponse{
-					Response: &gnmi.SubscribeResponse_SyncResponse{
-						SyncResponse: true,
-					},
-				}
-				_ = sync
 				for i := range responses {
 					if err := server.Send(&responses[i]); err != nil {
 						return err

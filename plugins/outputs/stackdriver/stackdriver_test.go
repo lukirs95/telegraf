@@ -100,7 +100,7 @@ func TestWrite(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestWriteResourceTypeAndLabels(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestWriteTagsAsResourceLabels(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestWriteMetricTypesOfficial(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestWriteMetricTypesPath(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestWriteAscendingTime(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestWriteBatchable(t *testing.T) {
 	mockMetric.reqs = nil
 	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
 
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestWriteIgnoredErrors(t *testing.T) {
 			mockMetric.err = tt.err
 			mockMetric.reqs = nil
 
-			c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+			c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -707,7 +707,7 @@ func TestGetStackdriverLabels(t *testing.T) {
 }
 
 func TestGetStackdriverIntervalEndpoints(t *testing.T) {
-	c, err := monitoring.NewMetricClient(context.Background(), clientOpt)
+	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1113,10 +1113,6 @@ func TestGenerateHistogramName(t *testing.T) {
 }
 
 func TestBuildHistogram(t *testing.T) {
-	s := &Stackdriver{
-		MetricNameFormat: "official",
-		Log:              testutil.Logger{},
-	}
 	m := testutil.MustMetric(
 		"http_server_duration",
 		map[string]string{},
@@ -1132,7 +1128,7 @@ func TestBuildHistogram(t *testing.T) {
 		},
 		time.Unix(0, 0),
 	)
-	value, err := s.buildHistogram(m)
+	value, err := buildHistogram(m)
 	require.NoError(t, err)
 
 	dist := value.GetDistributionValue()

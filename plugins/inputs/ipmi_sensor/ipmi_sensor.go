@@ -175,11 +175,10 @@ func (m *Ipmi) parse(acc telegraf.Accumulator, server, sensor string) error {
 	case "sdr":
 		if m.MetricVersion == 2 {
 			return m.parseV2(acc, hostname, out, timestamp)
-		} else {
-			return m.parseV1(acc, hostname, out, timestamp)
 		}
+		return m.parseV1(acc, hostname, out, timestamp)
 	case "chassis_power_status":
-		return m.parseChassisPowerStatus(acc, hostname, out, timestamp)
+		return parseChassisPowerStatus(acc, hostname, out, timestamp)
 	case "dcmi_power_reading":
 		return m.parseDCMIPowerReading(acc, hostname, out, timestamp)
 	}
@@ -187,7 +186,7 @@ func (m *Ipmi) parse(acc telegraf.Accumulator, server, sensor string) error {
 	return fmt.Errorf("unknown sensor type %q", sensor)
 }
 
-func (m *Ipmi) parseChassisPowerStatus(acc telegraf.Accumulator, hostname string, cmdOut []byte, measuredAt time.Time) error {
+func parseChassisPowerStatus(acc telegraf.Accumulator, hostname string, cmdOut []byte, measuredAt time.Time) error {
 	// each line will look something like
 	// Chassis Power is on
 	// Chassis Power is off

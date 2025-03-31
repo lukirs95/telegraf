@@ -281,8 +281,6 @@ func TestTemplateManagementEmptyTemplateIntegration(t *testing.T) {
 		fmt.Sprintf("http://%s:%s", container.Address, container.Ports[servicePort]),
 	}
 
-	ctx := context.Background()
-
 	e := &Elasticsearch{
 		URLs:              urls,
 		IndexName:         "test-%Y.%m.%d",
@@ -294,7 +292,7 @@ func TestTemplateManagementEmptyTemplateIntegration(t *testing.T) {
 		Log:               testutil.Logger{},
 	}
 
-	err := e.manageTemplate(ctx)
+	err := e.manageTemplate(t.Context())
 	require.Error(t, err)
 }
 
@@ -322,7 +320,7 @@ func TestUseOpTypeCreate(t *testing.T) {
 		Log:               testutil.Logger{},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.Timeout))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(e.Timeout))
 	defer cancel()
 
 	metrics := []telegraf.Metric{
@@ -365,7 +363,7 @@ func TestTemplateManagementIntegration(t *testing.T) {
 		Log:               testutil.Logger{},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.Timeout))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(e.Timeout))
 	defer cancel()
 
 	err := e.Connect()
@@ -403,11 +401,6 @@ func TestTemplateInvalidIndexPatternIntegration(t *testing.T) {
 }
 
 func TestGetTagKeys(t *testing.T) {
-	e := &Elasticsearch{
-		DefaultTagValue: "none",
-		Log:             testutil.Logger{},
-	}
-
 	tests := []struct {
 		IndexName         string
 		ExpectedIndexName string
@@ -452,7 +445,7 @@ func TestGetTagKeys(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		indexName, tagKeys := e.GetTagKeys(test.IndexName)
+		indexName, tagKeys := GetTagKeys(test.IndexName)
 		if indexName != test.ExpectedIndexName {
 			t.Errorf("Expected indexname %s, got %s\n", test.ExpectedIndexName, indexName)
 		}
@@ -553,7 +546,7 @@ func TestGetPipelineName(t *testing.T) {
 		DefaultPipeline: "myDefaultPipeline",
 		Log:             testutil.Logger{},
 	}
-	e.pipelineName, e.pipelineTagKeys = e.GetTagKeys(e.UsePipeline)
+	e.pipelineName, e.pipelineTagKeys = GetTagKeys(e.UsePipeline)
 
 	tests := []struct {
 		EventTime       time.Time
@@ -591,7 +584,7 @@ func TestGetPipelineName(t *testing.T) {
 	e = &Elasticsearch{
 		Log: testutil.Logger{},
 	}
-	e.pipelineName, e.pipelineTagKeys = e.GetTagKeys(e.UsePipeline)
+	e.pipelineName, e.pipelineTagKeys = GetTagKeys(e.UsePipeline)
 
 	for _, test := range tests {
 		pipelineName := e.getPipelineName(e.pipelineName, e.pipelineTagKeys, test.Tags)
@@ -669,7 +662,7 @@ func TestPipelineConfigs(t *testing.T) {
 
 	for _, test := range tests {
 		e := test.Elastic
-		e.pipelineName, e.pipelineTagKeys = e.GetTagKeys(e.UsePipeline)
+		e.pipelineName, e.pipelineTagKeys = GetTagKeys(e.UsePipeline)
 		pipelineName := e.getPipelineName(e.pipelineName, e.pipelineTagKeys, test.Tags)
 		require.Equal(t, test.Expected, pipelineName)
 	}
