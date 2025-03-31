@@ -2,6 +2,7 @@ package videoxlink
 
 import (
 	"context"
+	"time"
 
 	"github.com/influxdata/telegraf"
 	client "github.com/lukirs95/goxlinkclient"
@@ -17,7 +18,7 @@ func (xlink *VideoXLink) Start(_ telegraf.Accumulator) error {
 	xlink.stop = stop
 
 	xlink.wg.Add(1)
-	go func(){
+	go func() {
 		defer xlink.wg.Done()
 		for {
 			select {
@@ -25,7 +26,7 @@ func (xlink *VideoXLink) Start(_ telegraf.Accumulator) error {
 				return
 			case update := <-updates:
 				xlink.handleUpdate(update)
-			case stat := <- stats:
+			case stat := <-stats:
 				xlink.handleStats(stat)
 			}
 		}
@@ -33,11 +34,8 @@ func (xlink *VideoXLink) Start(_ telegraf.Accumulator) error {
 
 	for _, system := range xlink.Systems {
 		xlink.wg.Add(1)
-		go func(system string) {
-			defer xlink.wg.Done()
-			x := client.NewClient(system)
-			x.Connect(ctx, updates, stats)
-		}(system)
+		x := client.NewClient(system)
+		go xlink.connect(ctx, x, system, updates, stats)
 	}
 	return nil
 }
@@ -53,3 +51,16 @@ func (xlink *VideoXLink) Stop() {
 	xlink.wg.Wait()
 }
 
+func (xlink *VideoXLink) connect(ctx context.Context, x *client.Client, ip string, updates client.UpdateChan, stats client.StatsChan) {
+	defer xlink.wg.Done()
+	for {
+		xlink.Log.Infof("start xlink connection (%s)", ip)
+		if err := x.Connect(ctx, updates, stats); err != nil {
+			xlink.Log.Errorf("xlink connection fault (%s) %w", ip, err)
+			time.Sleep(time.Second * 5)
+		} else {
+			xlink.Log.Infof("xlink connection closed (%s)", ip)
+			return
+		}
+	}
+}

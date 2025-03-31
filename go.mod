@@ -140,7 +140,7 @@ require (
 	github.com/likexian/whois-parser v1.24.20
 	github.com/linkedin/goavro/v2 v2.13.1
 	github.com/logzio/azure-monitor-metrics-receiver v1.1.0
-	github.com/lukirs95/goxlinkclient v0.0.0-20250305142606-5cedd25830bd
+	github.com/lukirs95/goxlinkclient v0.0.0-20250331090122-ca61d670c928
 	github.com/lxc/incus/v6 v6.9.0
 	github.com/mdlayher/apcupsd v0.0.0-20220319200143-473c7b5f3c6a
 	github.com/mdlayher/vsock v1.2.1
@@ -245,6 +245,8 @@ require (
 	modernc.org/sqlite v1.36.0
 	software.sslmate.com/src/go-pkcs12 v0.5.0
 )
+
+require github.com/coder/websocket v1.8.13 // indirect
 
 require (
 	cel.dev/expr v0.19.1 // indirect
@@ -413,7 +415,7 @@ require (
 	github.com/leodido/ragel-machinery v0.0.0-20190525184631-5f46317e436b // indirect
 	github.com/likexian/gokit v0.25.15 // indirect
 	github.com/lufia/plan9stats v0.0.0-20240226150601-1dcf7310316a // indirect
-	github.com/lukirs95/gojsonrpc v0.0.0-20241125165611-fdf732123a4b // indirect
+	github.com/lukirs95/gojsonrpc v1.1.0 // indirect
 	github.com/lukirs95/websocket v0.0.0-20231006114246-534707f9bd9f // indirect
 	github.com/magiconair/properties v1.8.9 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
