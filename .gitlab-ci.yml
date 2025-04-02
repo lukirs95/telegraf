@@ -26,4 +26,10 @@ build-job:       # This job runs in the build stage, which runs first.
     - linux_x86
   stage: build
   script:
-    - make
+    - mkdir -p output
+    - make deps
+    - make telegraf
+    - mv telegraf ./output/telegraf
+  artifacts:
+    paths:
+      - output
