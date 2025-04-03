@@ -30,6 +30,7 @@ build-job:       # This job runs in the build stage, which runs first.
     - make deps
     - make telegraf
     - mv telegraf ./output/telegraf
+    - ls -l output
   artifacts:
     paths:
       - output
