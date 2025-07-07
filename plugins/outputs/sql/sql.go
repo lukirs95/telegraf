@@ -2,10 +2,13 @@
 package sql
 
 import (
+	"cmp"
 	gosql "database/sql"
 	_ "embed"
 	"fmt"
+	"iter"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,11 +52,13 @@ type ConvertStruct struct {
 
 type SQL struct {
 	Driver                string          `toml:"driver"`
-	DataSourceName        string          `toml:"data_source_name"`
+	DataSourceName        config.Secret   `toml:"data_source_name"`
 	TimestampColumn       string          `toml:"timestamp_column"`
 	TableTemplate         string          `toml:"table_template"`
 	TableExistsTemplate   string          `toml:"table_exists_template"`
+	TableUpdateTemplate   string          `toml:"table_update_template"`
 	InitSQL               string          `toml:"init_sql"`
+	BatchTx               bool            `toml:"batch_transactions"`
 	Convert               ConvertStruct   `toml:"convert"`
 	ConnectionMaxIdleTime config.Duration `toml:"connection_max_idle_time"`
 	ConnectionMaxLifetime config.Duration `toml:"connection_max_lifetime"`
@@ -61,8 +66,10 @@ type SQL struct {
 	ConnectionMaxOpen     int             `toml:"connection_max_open"`
 	Log                   telegraf.Logger `toml:"-"`
 
-	db     *gosql.DB
-	tables map[string]bool
+	db                       *gosql.DB
+	queryCache               map[string]string
+	tables                   map[string]map[string]bool
+	tableListColumnsTemplate string
 }
 
 func (*SQL) SampleConfig() string {
@@ -83,6 +90,11 @@ func (p *SQL) Init() error {
 		}
 	}
 
+	p.tableListColumnsTemplate = "SELECT column_name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME={TABLE}"
+	if p.Driver == "sqlite" {
+		p.tableListColumnsTemplate = "SELECT name AS column_name FROM pragma_table_info({TABLE})"
+	}
+
 	// Check for a valid driver
 	switch p.Driver {
 	case "clickhouse":
@@ -98,7 +110,14 @@ func (p *SQL) Init() error {
 }
 
 func (p *SQL) Connect() error {
-	db, err := gosql.Open(p.Driver, p.DataSourceName)
+	dsnBuffer, err := p.DataSourceName.Get()
+	if err != nil {
+		return fmt.Errorf("loading data source name secret failed: %w", err)
+	}
+	dsn := dsnBuffer.String()
+	dsnBuffer.Destroy()
+
+	db, err := gosql.Open(p.Driver, dsn)
 	if err != nil {
 		return fmt.Errorf("creating database client failed: %w", err)
 	}
@@ -119,7 +138,8 @@ func (p *SQL) Connect() error {
 	}
 
 	p.db = db
-	p.tables = make(map[string]bool)
+	p.tables = make(map[string]map[string]bool)
+	p.queryCache = make(map[string]string)
 
 	return nil
 }
@@ -209,6 +229,14 @@ func (p *SQL) generateCreateTable(metric telegraf.Metric) string {
 	return query
 }
 
+func (p *SQL) generateAddColumn(tablename, column, columnType string) string {
+	query := p.TableUpdateTemplate
+	query = strings.ReplaceAll(query, "{TABLE}", quoteIdent(tablename))
+	query = strings.ReplaceAll(query, "{COLUMN}", quoteIdent(column)+" "+columnType)
+
+	return query
+}
+
 func (p *SQL) generateInsert(tablename string, columns []string) string {
 	placeholders := make([]string, 0, len(columns))
 	quotedColumns := make([]string, 0, len(columns))
@@ -233,6 +261,50 @@ func (p *SQL) generateInsert(tablename string, columns []string) string {
 		strings.Join(placeholders, ","))
 }
 
+func (p *SQL) createTable(metric telegraf.Metric) error {
+	tablename := metric.Name()
+	stmt := p.generateCreateTable(metric)
+	if _, err := p.db.Exec(stmt); err != nil {
+		return fmt.Errorf("creating table failed: %w", err)
+	}
+	// Ensure compatibility: set the table cache to an empty map
+	p.tables[tablename] = make(map[string]bool)
+	// Modifying the table schema is opt-in
+	if p.TableUpdateTemplate != "" {
+		if err := p.updateTableCache(tablename); err != nil {
+			return fmt.Errorf("updating table cache failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func (p *SQL) createColumn(tablename, column, columnType string) error {
+	// Ensure table exists in cache before accessing columns
+	if _, tableExists := p.tables[tablename]; !tableExists {
+		if err := p.updateTableCache(tablename); err != nil {
+			return fmt.Errorf("updating table cache failed: %w", err)
+		}
+	}
+	// Ensure column existence check doesn't panic
+	if _, tableExists := p.tables[tablename]; !tableExists {
+		return fmt.Errorf("table %s does not exist in cache", tablename)
+	}
+	// Column already exists, nothing to do
+	if exists, colExists := p.tables[tablename][column]; colExists && exists {
+		return nil
+	}
+	// Generate and execute column addition statement
+	createColumn := p.generateAddColumn(tablename, column, columnType)
+	if _, err := p.db.Exec(createColumn); err != nil {
+		return fmt.Errorf("creating column failed: %w", err)
+	}
+	// Update cache after adding the column
+	if err := p.updateTableCache(tablename); err != nil {
+		return fmt.Errorf("updating table cache failed: %w", err)
+	}
+	return nil
+}
+
 func (p *SQL) tableExists(tableName string) bool {
 	stmt := strings.ReplaceAll(p.TableExistsTemplate, "{TABLE}", quoteIdent(tableName))
 
@@ -240,76 +312,177 @@ func (p *SQL) tableExists(tableName string) bool {
 	return err == nil
 }
 
+func (p *SQL) updateTableCache(tablename string) error {
+	stmt := strings.ReplaceAll(p.tableListColumnsTemplate, "{TABLE}", quoteStr(tablename))
+
+	columns, err := p.db.Query(stmt)
+	if err != nil {
+		return fmt.Errorf("fetching columns for table(%s) failed: %w", tablename, err)
+	}
+	defer columns.Close()
+
+	if p.tables[tablename] == nil {
+		p.tables[tablename] = make(map[string]bool)
+	}
+
+	for columns.Next() {
+		var columnName string
+		if err := columns.Scan(&columnName); err != nil {
+			return err
+		}
+
+		if !p.tables[tablename][columnName] {
+			p.tables[tablename][columnName] = true
+		}
+	}
+
+	return nil
+}
+
+func (p *SQL) processMetric(metric telegraf.Metric) (string, []string, []interface{}) {
+	// Preallocate the columns and values. Note we always allocate for the
+	// timestamp column even if we don't need it but that's not an issue.
+	entries := len(metric.TagList()) + len(metric.FieldList()) + 1
+	columns := make([]string, 0, entries)
+	values := make([]interface{}, 0, entries)
+	if p.TimestampColumn != "" {
+		columns = append(columns, p.TimestampColumn)
+		values = append(values, metric.Time())
+	}
+	// Tags are already sorted so we can add them without modification
+	for _, tag := range metric.TagList() {
+		columns = append(columns, tag.Key)
+		values = append(values, tag.Value)
+	}
+	// Fields are not sorted so sort them
+	fields := slices.SortedFunc(
+		iterSlice(metric.FieldList()),
+		func(a, b *telegraf.Field) int { return cmp.Compare(a.Key, b.Key) },
+	)
+	for _, field := range fields {
+		columns = append(columns, field.Key)
+		values = append(values, field.Value)
+	}
+	return strings.Join(append([]string{metric.Name()}, columns...), "\n"), columns, values
+}
+
+func (p *SQL) sendIndividual(sql string, values []interface{}) error {
+	switch p.Driver {
+	case "clickhouse":
+		// ClickHouse needs to batch inserts with prepared statements
+		tx, err := p.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin failed: %w", err)
+		}
+		stmt, err := tx.Prepare(sql)
+		if err != nil {
+			return fmt.Errorf("prepare failed: %w", err)
+		}
+		defer stmt.Close()
+
+		_, err = stmt.Exec(values...)
+		if err != nil {
+			return fmt.Errorf("execution failed: %w", err)
+		}
+		err = tx.Commit()
+		if err != nil {
+			return fmt.Errorf("commit failed: %w", err)
+		}
+	default:
+		_, err := p.db.Exec(sql, values...)
+		if err != nil {
+			return fmt.Errorf("execution failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (p *SQL) sendBatch(sql string, values [][]interface{}) error {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin failed: %w", err)
+	}
+
+	batch, err := tx.Prepare(sql)
+	if err != nil {
+		return fmt.Errorf("prepare failed: %w", err)
+	}
+	defer batch.Close()
+
+	for _, params := range values {
+		if _, err := batch.Exec(params...); err != nil {
+			if errRollback := tx.Rollback(); errRollback != nil {
+				return fmt.Errorf("execution failed: %w, unable to rollback: %w", err, errRollback)
+			}
+			return fmt.Errorf("execution failed: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed: %w", err)
+	}
+
+	return nil
+}
+
 func (p *SQL) Write(metrics []telegraf.Metric) error {
-	var err error
+	batchedQueries := make(map[string][][]interface{})
 
 	for _, metric := range metrics {
 		tablename := metric.Name()
-
 		// create table if needed
-		if !p.tables[tablename] && !p.tableExists(tablename) {
-			createStmt := p.generateCreateTable(metric)
-			_, err := p.db.Exec(createStmt)
-			if err != nil {
+		if _, found := p.tables[tablename]; !found && !p.tableExists(tablename) {
+			if err := p.createTable(metric); err != nil {
 				return err
 			}
 		}
-		p.tables[tablename] = true
-
-		var columns []string
-		var values []interface{}
-
-		if p.TimestampColumn != "" {
-			columns = append(columns, p.TimestampColumn)
-			values = append(values, metric.Time())
+		cacheKey, columns, values := p.processMetric(metric)
+		sql, found := p.queryCache[cacheKey]
+		if !found {
+			sql = p.generateInsert(tablename, columns)
+			p.queryCache[cacheKey] = sql
 		}
-
-		for column, value := range metric.Tags() {
-			columns = append(columns, column)
-			values = append(values, value)
+		// Modifying the table schema is opt-in
+		if p.TableUpdateTemplate != "" {
+			for i := range len(columns) {
+				if err := p.createColumn(tablename, columns[i], p.deriveDatatype(values[i])); err != nil {
+					return err
+				}
+			}
 		}
-
-		for column, value := range metric.Fields() {
-			columns = append(columns, column)
-			values = append(values, value)
-		}
-
-		sql := p.generateInsert(tablename, columns)
-
-		switch p.Driver {
-		case "clickhouse":
-			// ClickHouse needs to batch inserts with prepared statements
-			tx, err := p.db.Begin()
-			if err != nil {
-				return fmt.Errorf("begin failed: %w", err)
-			}
-			stmt, err := tx.Prepare(sql)
-			if err != nil {
-				return fmt.Errorf("prepare failed: %w", err)
-			}
-			defer stmt.Close() //nolint:revive,gocritic // done on purpose, closing will be executed properly
-
-			_, err = stmt.Exec(values...)
-			if err != nil {
-				return fmt.Errorf("execution failed: %w", err)
-			}
-			err = tx.Commit()
-			if err != nil {
-				return fmt.Errorf("commit failed: %w", err)
-			}
-		default:
-			_, err = p.db.Exec(sql, values...)
-			if err != nil {
-				return fmt.Errorf("execution failed: %w", err)
+		// Using BatchTx is opt-in
+		if p.BatchTx {
+			batchedQueries[sql] = append(batchedQueries[sql], values)
+		} else {
+			if err := p.sendIndividual(sql, values); err != nil {
+				return err
 			}
 		}
 	}
+
+	if p.BatchTx {
+		for query, queryParams := range batchedQueries {
+			if err := p.sendBatch(query, queryParams); err != nil {
+				return fmt.Errorf("failed to send a batched tx: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
 // Convert a DSN possibly using v1 parameters to clickhouse-go v2 format
 func (p *SQL) convertClickHouseDsn() {
-	u, err := url.Parse(p.DataSourceName)
+	dsnBuffer, err := p.DataSourceName.Get()
+	if err != nil {
+		p.Log.Errorf("loading data source name failed: %v", err)
+		return
+	}
+	dsn := dsnBuffer.String()
+	dsnBuffer.Destroy()
+
+	u, err := url.Parse(dsn)
 	if err != nil {
 		return
 	}
@@ -351,7 +524,9 @@ func (p *SQL) convertClickHouseDsn() {
 	}
 
 	u.RawQuery = query.Encode()
-	p.DataSourceName = u.String()
+	if err := p.DataSourceName.Set([]byte(u.String())); err != nil {
+		p.Log.Errorf("updating data source name to click house dsn failed: %v", err)
+	}
 }
 
 func init() {
@@ -370,4 +545,14 @@ func init() {
 			ConnectionMaxIdle: 2,
 		}
 	})
+}
+
+func iterSlice[E any](slice []E) iter.Seq[E] {
+	return func(yield func(E) bool) {
+		for _, element := range slice {
+			if ok := yield(element); !ok {
+				return
+			}
+		}
+	}
 }

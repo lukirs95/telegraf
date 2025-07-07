@@ -74,6 +74,13 @@ to use them.
     # name = ""
     # subjects = []
 
+    ## Use asynchronous publishing for higher throughput, but note that it does not guarantee order within batches.
+    # async_publish = false
+
+    ## Timeout for wating on acknowledgement on asynchronous publishing
+    ## String with valid units "ns", "us" (or "µs"), "ms", "s", "m", "h".
+    # async_ack_timeout = "5s"
+
     ## Full jetstream create stream config, refer: https://docs.nats.io/nats-concepts/jetstream/streams
     # retention = "limits"
     # max_consumers = -1
@@ -92,4 +99,8 @@ to use them.
     # allow_rollup_hdrs = false
     # allow_direct = true
     # mirror_direct = false
+
+    ## Disable creating the stream but assume the stream is managed externally
+    ## and already exists. This will make the plugin fail if the steam does not exist.
+    # disable_stream_creation = false
 ```

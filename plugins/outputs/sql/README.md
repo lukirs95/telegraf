@@ -40,8 +40,8 @@ driver selected.
 Through the nature of the inputs plugins, the amounts of columns inserted within
 rows for a given metric may differ. Since the tables are created based on the
 tags and fields available within an input metric, it's possible the created
-table won't contain all the necessary columns. You might need to initialize
-the schema yourself, to avoid this scenario.
+table won't contain all the necessary columns. If you wish to automate table
+updates, check out the [Schema updates](#schema-updates) section for more info.
 
 ## Advanced options
 
@@ -67,6 +67,9 @@ DEFAULT CURRENT\_TIMESTAMP, {COLUMNS})".
 The mapping of metric types to sql column types can be customized through the
 convert settings.
 
+If your database server supports Prepared Statements / Batch / Bulk Inserts,
+you could improve the ingestion rate, by enabling `batch_transactions`
+
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
 In addition to the plugin-specific configuration settings, plugins support
@@ -75,6 +78,14 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `data_source_name`
+option. See the [secret-store documentation][SECRETSTORE] for more details on
+how to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
 ## Configuration
 
@@ -110,8 +121,20 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ##  {TABLE} - tablename as a quoted identifier
   # table_exists_template = "SELECT 1 FROM {TABLE} LIMIT 1"
 
+  ## Table update template, available template variables:
+  ##  {TABLE} - table name as a quoted identifier
+  ##  {COLUMN} - column definition (quoted identifier and type)
+  ## NOTE: Ensure the user (you're using to write to the database) has necessary permissions
+  ##
+  ## Use the following setting for automatically adding columns:
+  ## table_update_template = "ALTER TABLE {TABLE} ADD COLUMN {COLUMN}"
+  # table_update_template = ""
+
   ## Initialization SQL
   # init_sql = ""
+
+  ## Send metrics with the same columns and the same table as batches using prepared statements
+  # batch_transactions = false
 
   ## Maximum amount of time a connection may be idle. "0s" means connections are
   ## never closed due to idle time.
@@ -153,6 +176,26 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   #  ## the unsigned option. This is useful for a database like ClickHouse where
   #  ## the unsigned value should use a value like "uint64".
   #  # conversion_style = "unsigned_suffix"
+```
+
+## Schema updates
+
+The default behavior of this plugin is to create a schema for the table,
+based on the current metric (for both fields and tags). However, writing
+subsequent metrics with additional fields or tags will result in errors.
+
+If you wish the plugin to sync the column-schema for every metric,
+specify the `table_update_template` setting in your config file.
+
+> [!NOTE] The following snippet contains a generic query that your
+> database may (or may not) support. Consult your database's
+> documentation for proper syntax and table / column options.
+
+```toml
+# Save metrics to an SQL Database
+[[outputs.sql]]
+  ## Table update template
+  table_update_template = "ALTER TABLE {TABLE} ADD COLUMN {COLUMN}"
 ```
 
 ## Driver-specific information

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	docker "github.com/docker/docker/client"
 )
@@ -18,9 +17,12 @@ var (
 )
 
 type dockerClient interface {
-	ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error)
+	// ContainerList lists the containers in the Docker environment.
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	// ContainerLogs retrieves the logs of a specific container.
 	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
-	ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
+	// ContainerInspect inspects a specific container and retrieves its details.
+	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 }
 
 func newEnvClient() (dockerClient, error) {
@@ -52,13 +54,17 @@ type socketClient struct {
 	client *docker.Client
 }
 
-func (c *socketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]types.Container, error) {
+// ContainerList lists the containers in the Docker environment.
+func (c *socketClient) ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 	return c.client.ContainerList(ctx, options)
 }
 
+// ContainerLogs retrieves the logs of a specific container.
 func (c *socketClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
 	return c.client.ContainerLogs(ctx, containerID, options)
 }
-func (c *socketClient) ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+
+// ContainerInspect inspects a specific container and retrieves its details.
+func (c *socketClient) ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error) {
 	return c.client.ContainerInspect(ctx, containerID)
 }
