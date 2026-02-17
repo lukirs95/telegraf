@@ -87,7 +87,7 @@ func (r *prtgnm) gather(acc telegraf.Accumulator, s sensor) error {
 
 		matchPower := fiberRegex.FindStringSubmatch(dp.Name)
 		if matchPower != nil {
-			tags["port"] = fmt.Sprintf("%s%s", matchPower[2], matchPower[3])
+			tags["port"] = fmt.Sprintf("%s%s", matchPower[2], matchPower[4])
 			tags["direction"] = matchPower[1]
 
 			fields["power"] = dp.LastValueConverted()
