@@ -102,7 +102,15 @@ func (r *prtgnm) gather(acc telegraf.Accumulator, s sensor) error {
 			}
 
 			toLower := strings.ToLower(matchRate[1])
-			fields[toLower] = dp.LastValueRaw
+
+			if toLower == "traffic" {
+				i, ok := dp.LastValueRaw.(float64)
+				if ok {
+					fields[toLower] = i * 8
+				}
+			} else {
+				fields[toLower] = dp.LastValueRaw
+			}
 		}
 
 		if len(fields) > 0 {
