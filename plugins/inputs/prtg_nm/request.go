@@ -32,7 +32,7 @@ type Response struct {
 	Channels []Datapoint `json:"channels"`
 }
 
-var fiberRegex = regexp.MustCompile(`^subslot \d/\d+ transceiver \d+ ([RT]x) ([WL]AN)( ?)(\d?)$`)
+var fiberRegex = regexp.MustCompile(`^subslot \d/\d+ transceiver \d+ ([RT]x) ([WL]AN)( ?)(\d?).*$`)
 var rateRegex = regexp.MustCompile(`^(Discards|Errors|Traffic) (In|Out)$`)
 
 func (r *prtgnm) gather(acc telegraf.Accumulator, s sensor) error {
