@@ -32,7 +32,7 @@ type Response struct {
 	Channels []Datapoint `json:"channels"`
 }
 
-var fiberRegex = regexp.MustCompile(`^subslot \d/\d+ transceiver \d+ ([RT]x) ([WL]AN)( ?)(\d?).*$`)
+var fiberRegex = regexp.MustCompile(`^subslot \d/\d+ transceiver \d+ ([RT]x) ([WL]AN) ?(\d?)(.*)$`)
 var rateRegex = regexp.MustCompile(`^(Discards|Errors|Traffic) (In|Out)$`)
 
 func (r *prtgnm) gather(acc telegraf.Accumulator, s sensor) error {
@@ -87,7 +87,12 @@ func (r *prtgnm) gather(acc telegraf.Accumulator, s sensor) error {
 
 		matchPower := fiberRegex.FindStringSubmatch(dp.Name)
 		if matchPower != nil {
-			tags["port"] = fmt.Sprintf("%s%s", matchPower[2], matchPower[4])
+			if len(matchPower) == 4 {
+				tags["port"] = fmt.Sprintf("%s%s", matchPower[2], matchPower[3])
+			} else if len(matchPower) == 5 {
+				tags["port"] = fmt.Sprintf("%s%s%s", matchPower[2], matchPower[3], matchPower[4])
+			}
+
 			tags["direction"] = matchPower[1]
 
 			fields["power"] = dp.LastValueConverted()
