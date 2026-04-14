@@ -2,9 +2,6 @@ package ewdxem4dante
 
 import (
 	_ "embed"
-	"fmt"
-	"net"
-	"sync"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -14,12 +11,12 @@ import (
 var sampleConfig string
 
 type EWDX4 struct {
-	System string `toml:"system"`
+	System   string `toml:"system"`
+	Password string `toml:"password"`
+
+	State [4]Channel
 
 	Log telegraf.Logger `toml:"-"`
-
-	writeMU sync.Mutex
-	conn    net.Conn
 }
 
 func (*EWDX4) SampleConfig() string {
@@ -27,12 +24,15 @@ func (*EWDX4) SampleConfig() string {
 }
 
 func (ewdx *EWDX4) Init() error {
-	conn, err := net.Dial("udp", fmt.Sprintf("%s:45", ewdx.System))
-	if err != nil {
-		return fmt.Errorf("could not create socket for System: %s: %w", ewdx.System, err)
+	createRestyClient(ewdx.Password)
+
+	ewdx.State = [4]Channel{
+		{Id: 0},
+		{Id: 1},
+		{Id: 2},
+		{Id: 3},
 	}
 
-	ewdx.conn = conn
 	return nil
 }
 

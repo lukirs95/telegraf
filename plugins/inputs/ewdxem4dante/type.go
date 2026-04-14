@@ -1,77 +1,55 @@
 package ewdxem4dante
 
-type Name *string
-type Gain *int
-type Mute *bool
-type Trim *int
-type Gauge *int
-type Type *string
-type Divi *int
-type RSQI *int
-type RSSI *float32
-type Frequency *int
-type Warnings *[]string
-
-type EWDXEM4DANTE struct {
-	Rx1 RX `json:"rx1"`
-	Rx2 RX `json:"rx2"`
-	Rx3 RX `json:"rx3"`
-	Rx4 RX `json:"rx4"`
-	M   struct {
-		RX1 MRX `json:"rx1"`
-		RX2 MRX `json:"rx2"`
-		RX3 MRX `json:"rx3"`
-		RX4 MRX `json:"rx4"`
-	} `json:"m"`
+type Channel struct {
+	Id             int
+	Receiver       Receiver
+	Transmitter    Transmitter
+	Battery        Battery
+	SignalStrength float32
+	SignalQuality  float32
+	Diversity      float32
 }
 
-type MateTX1 struct {
-	Mates struct {
-		Mate Mate `json:"tx1"`
-	} `json:"mates"`
+type SomeValue struct {
+	Value float32 `json:"value"`
 }
 
-type MateTX2 struct {
-	Mates struct {
-		Mate Mate `json:"tx2"`
-	} `json:"mates"`
+// {{baseUrl}}/api/channel/:channelId/signalStrengthIndicator
+type SignalStrength SomeValue
+
+// {{baseUrl}}/api/channel/:channelId/signalQualityIndicator
+type SignalQuality SomeValue
+
+// {{baseUrl}}/api/channel/:channelId/diversityIndicator
+type Diversity SomeValue
+
+// {{baseUrl}}/api/channel/:channelId
+type Receiver struct {
+	Name         string   `json:"name"`
+	Mute         bool     `json:"mute"`
+	Mates        []string `json:"mates"`
+	Gain         int      `json:"gain"`
+	Audio        []string `json:"audio"`
+	OutputLevel  int      `json:"outputLevel"`
+	EventCounter int      `json:"eventCounter"`
 }
 
-type MateTX3 struct {
-	Mates struct {
-		Mate Mate `json:"tx3"`
-	} `json:"mates"`
+// {{baseUrl}}/api/transmitters/:transmitterId
+type Transmitter struct {
+	Type           string `json:"type"`
+	Capsule        string `json:"capsule"`
+	Version        string `json:"version"`
+	Mute           bool   `json:"mute"`
+	Identification bool   `json:"identification"`
+	LowCut         string `json:"lowcut"`
+	Name           string `json:"name"`
+	Trim           int    `json:"trim"`
+	Led            bool   `json:"led"`
+	Lock           bool   `json:"lock"`
 }
 
-type MateTX4 struct {
-	Mates struct {
-		Mate Mate `json:"tx4"`
-	} `json:"mates"`
-}
-
-type RX struct {
-	Frequency Frequency `json:"frequency"`
-	Gain      Gain      `json:"gain"`
-	Mute      Mute      `json:"mute"`
-	Name      Name      `json:"name"`
-	Warnings  Warnings  `json:"warnings"`
-}
-
-type MRX struct {
-	Divi Divi `json:"divi"`
-	RSQI RSQI `json:"rsqi"`
-	RSSI RSSI `json:"rssi"`
-}
-
-type Mate struct {
-	Mute     Mute     `json:"mute"`
-	Trim     Trim     `json:"trim"`
-	Type     Type     `json:"type"`
-	Warnings Warnings `json:"Type"`
-	Battery  Battery  `json:"battery"`
-}
-
+// {{baseUrl}}/api/transmitters/:transmitterId/battery
 type Battery struct {
-	Gauge Gauge `json:"gauge"`
-	Type  Type  `json:"type"`
+	Gauge float32 `json:"gauge"`
+	Type  string  `json:"type"`
 }
