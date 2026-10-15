@@ -16,8 +16,8 @@ busyness, CPU temperature, actual CPU utilization and power statistics.
 Plugin is mostly based on Linux Kernel modules that expose specific metrics over
 `sysfs` or `devfs` interfaces. The following dependencies are expected:
 
-- `intel-rapl` kernel module which exposes Intel Runtime Power Limiting metrics over
-  `sysfs` (`/sys/devices/virtual/powercap/intel-rapl`),
+- `intel-rapl` kernel module which exposes Intel Runtime Power Limiting metrics
+  over `sysfs` (`/sys/devices/virtual/powercap/intel-rapl`),
 - `msr` kernel module that provides access to processor model specific
   registers over `devfs` (`/dev/cpu/cpu%d/msr`),
 - `cpufreq` kernel module - which exposes per-CPU Frequency over `sysfs`
@@ -110,7 +110,6 @@ The following processor properties are required by the plugin:
     - `cpu_c3_state_residency`
     - `cpu_c6_state_residency`
     - `cpu_c7_state_residency`
-    - `cpu_busy_cycles` (**DEPRECATED** - superseded by `cpu_c0_state_residency_percent`)
     - `cpu_busy_frequency`
     - `cpu_temperature`
     - `cpu_base_frequency`
@@ -119,7 +118,6 @@ The following processor properties are required by the plugin:
   - `aperfmperf` shall be present to collect the following metrics:
     - `cpu_c0_state_residency`
     - `cpu_c1_state_residency`
-    - `cpu_busy_cycles` (**DEPRECATED** - superseded by `cpu_c0_state_residency_percent`)
     - `cpu_busy_frequency`
   - `dts` shall be present to collect:
     - `cpu_temperature`
@@ -205,10 +203,9 @@ The following processor properties are required by the plugin:
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -299,7 +296,6 @@ Details of these dependencies are discussed above:
 | `cpu_c3_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
 | `cpu_c6_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
 | `cpu_c7_state_residency`                                                 | `cpu_metrics`     | `msr`  module     |
-| `cpu_busy_cycles` (**DEPRECATED**, use `cpu_c0_state_residency_percent`) | `cpu_metrics`     | `msr`  module     |
 | `cpu_temperature`                                                        | `cpu_metrics`     | `msr`  module     |
 | `cpu_busy_frequency`                                                     | `cpu_metrics`     | `msr`  module     |
 | `cpu_c0_substate_c01`                                                    | `cpu_metrics`     | `perf` interface  |
@@ -385,8 +381,9 @@ The following measurements are supported by Intel PowerStat plugin:
       | `core_id`    | ID of physical processor core. |
       | `cpu_id`     | ID of logical processor core.  |
 
-    Measurement `powerstat_core` metrics are collected per-CPU (`cpu_id` is the key)
-    while `core_id` and `package_id` tags are additional topology information.
+    Measurement `powerstat_core` metrics are collected per-CPU, with `cpu_id`
+    being the key, while `core_id` and `package_id` tags are additional topology
+    information.
 
   - Available metrics for `powerstat_core` measurement:
 
@@ -403,7 +400,6 @@ The following measurements are supported by Intel PowerStat plugin:
       | `cpu_c0_substate_c01_percent`     | Percentage of time that CPU Core spent in C0.1 substate out of the total time in the C0 state.                                                                            | %               |
       | `cpu_c0_substate_c02_percent`     | Percentage of time that CPU Core spent in C0.2 substate out of the total time in the C0 state.                                                                            | %               |
       | `cpu_c0_substate_c0_wait_percent` | Percentage of time that CPU Core spent in C0_Wait substate out of the total time in the C0 state.                                                                         | %               |
-      | `cpu_busy_cycles_percent`         | (**DEPRECATED** - superseded by cpu_c0_state_residency_percent) CPU Core Busy cycles as a ratio of Cycles spent in C0 state residency to all cycles executed by CPU Core. | %               |
 
 - `powerstat_package`
   - The following tags are returned by plugin with `powerstat_package` measurements:

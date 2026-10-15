@@ -14,18 +14,17 @@ including clusters, hosts, resource pools, VMs, datastores and vSAN information.
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
-## Secret-store support
+## Secret store support
 
-This plugin supports secrets from secret-stores for the `username` and
+This plugin supports secrets from secret stores for the `username` and
 `password` option.
-See the [secret-store documentation][SECRETSTORE] for more details on how
+See the [secret store documentation][SECRETSTORE] for more details on how
 to use them.
 
 [SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
@@ -228,11 +227,11 @@ to use them.
   ## it too much may cause performance issues.
   # metric_lookback = 3
 
-  ## Optional SSL Config
-  # ssl_ca = "/path/to/cafile"
-  # ssl_cert = "/path/to/certfile"
-  # ssl_key = "/path/to/keyfile"
-  ## Use SSL but skip chain & host verification
+  ## Optional TLS Config
+  # tls_ca = "/path/to/cafile"
+  # tls_cert = "/path/to/certfile"
+  # tls_key = "/path/to/keyfile"
+  ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
 
   ## The Historical Interval value must match EXACTLY the interval in the daily
@@ -428,7 +427,6 @@ instance. For example:
   password = "secret"
 
   insecure_skip_verify = true
-  force_discover_on_init = true
 
   # Exclude all historical metrics
   datastore_metric_exclude = ["*"]
@@ -450,7 +448,6 @@ instance. For example:
   password = "secret"
 
   insecure_skip_verify = true
-  force_discover_on_init = true
   host_metric_exclude = ["*"] # Exclude realtime metrics
   vm_metric_exclude = ["*"] # Exclude realtime metrics
 
@@ -1027,11 +1024,11 @@ configuration of hosts, VMs, and other resources.
   collect_concurrency = 5
   discover_concurrency = 5
 
-  ## Optional SSL Config
-  # ssl_ca = "/path/to/cafile"
-  # ssl_cert = "/path/to/certfile"
-  # ssl_key = "/path/to/keyfile"
-  ## Use SSL but skip chain & host verification
+  ## Optional TLS Config
+  # tls_ca = "/path/to/cafile"
+  # tls_cert = "/path/to/certfile"
+  # tls_key = "/path/to/keyfile"
+  ## Use TLS but skip chain & host verification
   # insecure_skip_verify = false
 ```
 
@@ -1210,7 +1207,6 @@ For example:
   password = "secret"
 
   insecure_skip_verify = true
-  force_discover_on_init = true
 
   # Exclude all other metrics
   vm_metric_exclude = ["*"]
@@ -1235,7 +1231,6 @@ For example:
   password = "secret"
 
   insecure_skip_verify = true
-  force_discover_on_init = true
 
   # Exclude all other metrics
   vm_metric_exclude = ["*"]

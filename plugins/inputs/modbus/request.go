@@ -1,6 +1,7 @@
 package modbus
 
 import (
+	"maps"
 	"math"
 	"sort"
 
@@ -216,9 +217,7 @@ func groupFieldsToRequests(fields []field, params groupingParams) []request {
 		if f.tags == nil {
 			f.tags = make(map[string]string, len(params.tags))
 		}
-		for k, v := range params.tags {
-			f.tags[k] = v
-		}
+		maps.Copy(f.tags, params.tags)
 
 		// Check if we need to interrupt the current chunk and require a new one
 		if current.length > 0 && f.address == current.address+current.length {
@@ -273,18 +272,9 @@ func groupFieldsToRequests(fields []field, params groupingParams) []request {
 				requests = append(requests, optimizeGroup(g, params.maxBatchSize)...)
 			}
 		}
-	case "aggressive":
-		// Allow rearranging fields similar to "rearrange" but allow mixing of groups
-		// This might reduce the number of requests at the cost of more registers being touched.
-		var total request
-		for _, g := range groups {
-			if len(g.fields) > 0 {
-				total.fields = append(total.fields, g.fields...)
-			}
-		}
-		requests = optimizeGroup(total, params.maxBatchSize)
 	case "max_insert":
-		// Similar to aggressive but keeps the number of touched registers below a threshold
+		// Allow rearranging fields similar to "rearrange" but allow mixing of groups
+		// This keeps the number of touched registers below a threshold
 		var total request
 		for _, g := range groups {
 			if len(g.fields) > 0 {

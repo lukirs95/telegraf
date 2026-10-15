@@ -29,12 +29,19 @@ normal plugins:
 2. The CLI options of `--test`, `--test-wait`, and `--once` may not produce
    output for this plugin
 
+## Tracking metric support <!-- @/docs/includes/plugin_tracking_metrics.md -->
+
+This plugin supports [tracking metrics][METRICS.md], which allows the plugin
+to be notified when metrics have been delivered to all outputs, enabling proper
+acknowledgment back to the source.
+
+[METRICS.md]: ../../../docs/METRICS.md#tracking-metrics
+
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -59,6 +66,11 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## message. You need to configure the nats-server.
   ## https://docs.nats.io/nats-concepts/jetstream.
   jetstream_subjects = ["js_telegraf"]
+
+  ## explicitly specify the jetstream stream name
+  ## useful for sourced streams where there is no subject defined and
+  ## thus jetstream_subjects won't work
+  jetstream_stream = ""
 
   ## name a queue group
   queue_group = "telegraf_consumers"

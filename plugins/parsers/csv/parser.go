@@ -7,21 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata" // needed to bundle timezone info into the binary for Windows
 	"unicode/utf8"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
-	"github.com/influxdata/telegraf/internal/choice"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/parsers"
 )
-
-type TimeFunc func() time.Time
 
 const replacementByte = "\ufffd"
 const commaByte = "\u002C"
@@ -50,21 +50,20 @@ type Parser struct {
 	ResetMode          string          `toml:"csv_reset_mode"`
 	Log                telegraf.Logger `toml:"-"`
 
+	DefaultTags map[string]string
+
 	metadataSeparatorList metadataPattern
+	timeFunc              func() time.Time
 	location              *time.Location
-
-	gotColumnNames bool
-
-	invalidDelimiter bool
-
-	TimeFunc     func() time.Time
-	DefaultTags  map[string]string
-	metadataTags map[string]string
-
+	gotColumnNames        bool
+	invalidDelimiter      bool
+	metadataTags          map[string]string
 	gotInitialColumnNames bool
 	remainingSkipRows     int
 	remainingHeaderRows   int
 	remainingMetadataRows int
+
+	sync.Mutex
 }
 
 type metadataPattern []string
@@ -165,8 +164,8 @@ func (p *Parser) Init() error {
 		return fmt.Errorf("initializing separators failed: %w", err)
 	}
 
-	if p.TimeFunc == nil {
-		p.TimeFunc = time.Now
+	if p.timeFunc == nil {
+		p.timeFunc = time.Now
 	}
 
 	if p.Timezone != "" {
@@ -180,7 +179,7 @@ func (p *Parser) Init() error {
 	if p.ResetMode == "" {
 		p.ResetMode = "none"
 	}
-	if !choice.Contains(p.ResetMode, []string{"none", "always"}) {
+	if !slices.Contains([]string{"none", "always"}, p.ResetMode) {
 		return fmt.Errorf("unknown reset mode %q", p.ResetMode)
 	}
 	p.Reset()
@@ -188,8 +187,8 @@ func (p *Parser) Init() error {
 	return nil
 }
 
-func (p *Parser) SetTimeFunc(fn TimeFunc) {
-	p.TimeFunc = fn
+func (p *Parser) SetTimeFunc(fn func() time.Time) {
+	p.timeFunc = fn
 }
 
 func (p *Parser) compile(r io.Reader) *csv.Reader {
@@ -218,6 +217,9 @@ func validDelim(r rune) bool {
 }
 
 func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
+	p.Lock()
+	defer p.Unlock()
+
 	// Reset the parser according to the specified mode
 	if p.ResetMode == "always" {
 		p.Reset()
@@ -237,6 +239,9 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 }
 
 func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
+	p.Lock()
+	defer p.Unlock()
+
 	if len(line) == 0 {
 		if p.remainingSkipRows > 0 {
 			p.remainingSkipRows--
@@ -282,9 +287,7 @@ func parseCSV(p *Parser, r io.Reader) ([]telegraf.Metric, error) {
 		}
 		p.remainingMetadataRows--
 		m := p.parseMetadataRow(line)
-		for k, v := range m {
-			p.metadataTags[k] = v
-		}
+		maps.Copy(p.metadataTags, m)
 	}
 	csvReader := p.compile(lineReader)
 	// if there is a header, and we did not get DataColumns
@@ -325,7 +328,7 @@ func parseCSV(p *Parser, r io.Reader) ([]telegraf.Metric, error) {
 		return nil, err
 	}
 
-	metrics := make([]telegraf.Metric, 0)
+	metrics := make([]telegraf.Metric, 0, len(table))
 	for _, record := range table {
 		m, err := p.parseRecord(record)
 		if err != nil {
@@ -341,19 +344,15 @@ func parseCSV(p *Parser, r io.Reader) ([]telegraf.Metric, error) {
 }
 
 func (p *Parser) parseRecord(record []string) (telegraf.Metric, error) {
-	recordFields := make(map[string]interface{})
+	recordFields := make(map[string]any)
 	tags := make(map[string]string)
 
 	if p.TagOverwrite {
 		// add default tags
-		for k, v := range p.DefaultTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, p.DefaultTags)
 
 		// add metadata tags
-		for k, v := range p.metadataTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, p.metadataTags)
 	}
 
 	// skip columns in record
@@ -393,7 +392,7 @@ outer:
 					return nil, errors.New("column type: column count exceeded")
 				}
 
-				var val interface{}
+				var val any
 				var err error
 
 				switch p.ColumnTypes[i] {
@@ -435,14 +434,10 @@ outer:
 
 	if !p.TagOverwrite {
 		// add metadata tags
-		for k, v := range p.metadataTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, p.metadataTags)
 
 		// add default tags
-		for k, v := range p.DefaultTags {
-			tags[k] = v
-		}
+		maps.Copy(tags, p.DefaultTags)
 	}
 
 	// will default to plugin name
@@ -453,7 +448,7 @@ outer:
 		}
 	}
 
-	metricTime, err := parseTimestamp(p.TimeFunc, recordFields, p.TimestampColumn, p.TimestampFormat, p.location)
+	metricTime, err := parseTimestamp(p.timeFunc, recordFields, p.TimestampColumn, p.TimestampFormat, p.location)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +465,7 @@ outer:
 // ParseTimestamp return a timestamp, if there is no timestamp on the csv it
 // will be the current timestamp, else it will try to parse the time according
 // to the format.
-func parseTimestamp(timeFunc func() time.Time, recordFields map[string]interface{},
+func parseTimestamp(timeFunc func() time.Time, recordFields map[string]any,
 	timestampColumn, timestampFormat string, timezone *time.Location,
 ) (time.Time, error) {
 	if timestampColumn != "" {

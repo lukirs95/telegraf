@@ -18,7 +18,7 @@ var tenMillisecondsDuration = config.Duration(10 * time.Millisecond)
 // Key, value pair that represents a telegraf.Metric Field
 type field struct {
 	key string
-	val interface{}
+	val any
 }
 
 func fieldList(fields ...field) []field {
@@ -508,9 +508,9 @@ func TestTopkGroupByKeyTag(t *testing.T) {
 
 func TestTracking(t *testing.T) {
 	inputRaw := []telegraf.Metric{
-		metric.New("foo", map[string]string{}, map[string]interface{}{"value": 100}, time.Unix(0, 0)),
-		metric.New("bar", map[string]string{}, map[string]interface{}{"value": 22}, time.Unix(0, 0)),
-		metric.New("baz", map[string]string{}, map[string]interface{}{"value": 1}, time.Unix(0, 0)),
+		metric.New("foo", map[string]string{}, map[string]any{"value": 100}, time.Unix(0, 0)),
+		metric.New("bar", map[string]string{}, map[string]any{"value": 22}, time.Unix(0, 0)),
+		metric.New("baz", map[string]string{}, map[string]any{"value": 1}, time.Unix(0, 0)),
 	}
 
 	var mu sync.Mutex
@@ -531,19 +531,19 @@ func TestTracking(t *testing.T) {
 		metric.New(
 			"foo",
 			map[string]string{},
-			map[string]interface{}{"value": 100},
+			map[string]any{"value": 100},
 			time.Unix(0, 0),
 		),
 		metric.New(
 			"bar",
 			map[string]string{},
-			map[string]interface{}{"value": 22},
+			map[string]any{"value": 22},
 			time.Unix(0, 0),
 		),
 		metric.New(
 			"baz",
 			map[string]string{},
-			map[string]interface{}{"value": 1},
+			map[string]any{"value": 1},
 			time.Unix(0, 0),
 		),
 	}
@@ -560,10 +560,17 @@ func TestTracking(t *testing.T) {
 	plugin.Reset()
 
 	// Process expected metrics and compare with resulting metrics
-	var actual []telegraf.Metric
+	// We need to retrigger 'Apply' as the processor will only emit data after
+	// the configured period. The follow-up 'Apply' calls are without metrics
+	// to avoid situations where a metric is accumulated multiple time and
+	// situations where a tracking metric is acknowledged multiple times leading
+	// to a panic.
+	actual := plugin.Apply(input...)
 	require.Eventuallyf(t, func() bool {
-		actual = plugin.Apply(input...)
-		return len(actual) > 0
+		if len(actual) < len(expected) {
+			actual = plugin.Apply()
+		}
+		return len(actual) >= len(expected)
 	}, time.Second, 100*time.Millisecond, "never got any metrics")
 	testutil.RequireMetricsEqual(t, expected, actual)
 
@@ -584,7 +591,7 @@ func TestTracking(t *testing.T) {
 var metric11 = metric.New(
 	"m1",
 	map[string]string{"tag_name": "tag_value1"},
-	map[string]interface{}{
+	map[string]any{
 		"a": float64(15.3),
 		"b": float64(40),
 	},
@@ -594,7 +601,7 @@ var metric11 = metric.New(
 var metric12 = metric.New(
 	"m1",
 	map[string]string{"tag_name": "tag_value1"},
-	map[string]interface{}{
+	map[string]any{
 		"a": float64(50),
 	},
 	time.Now(),
@@ -603,7 +610,7 @@ var metric12 = metric.New(
 var metric13 = metric.New(
 	"m1",
 	map[string]string{"tag_name": "tag_value1"},
-	map[string]interface{}{
+	map[string]any{
 		"a": float64(0.3),
 		"c": float64(400),
 	},
@@ -613,7 +620,7 @@ var metric13 = metric.New(
 var metric14 = metric.New(
 	"m1",
 	map[string]string{"tag_name": "tag_value1"},
-	map[string]interface{}{
+	map[string]any{
 		"a": float64(24.12),
 		"b": float64(40),
 	},
@@ -623,7 +630,7 @@ var metric14 = metric.New(
 var metric15 = metric.New(
 	"m1",
 	map[string]string{"tag_name": "tag_value1"},
-	map[string]interface{}{
+	map[string]any{
 		"a": float64(50.5),
 		"h": float64(1),
 		"u": float64(2.4),
@@ -643,7 +650,7 @@ var metric21 = metric.New(
 		"tag3": "SIX",
 		"tag4": "EIGHT",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(31.31),
 		"A":     float64(95.36),
 		"C":     float64(72.41),
@@ -660,7 +667,7 @@ var metric22 = metric.New(
 		"tag3": "THREE",
 		"tag4": "EIGHT",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(59.43),
 		"A":     float64(0.6),
 	},
@@ -676,7 +683,7 @@ var metric23 = metric.New(
 		"tag3": "SIX",
 		"tag5": "TEN",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(74.18),
 		"A":     float64(77.42),
 		"B":     float64(60.96),
@@ -692,7 +699,7 @@ var metric24 = metric.New(
 		"tag2": "FIVE",
 		"tag3": "THREE",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(72),
 		"B":     float64(22.1),
 		"C":     float64(30.8),
@@ -709,7 +716,7 @@ var metric25 = metric.New(
 		"tag3": "SEVEN",
 		"tag4": "NINE",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(87.92),
 		"B":     float64(81.55),
 		"C":     float64(45.1),
@@ -726,7 +733,7 @@ var metric26 = metric.New(
 		"tag3": "SEVEN",
 		"tag4": "NINE",
 	},
-	map[string]interface{}{
+	map[string]any{
 		"value": float64(75.3),
 		"A":     float64(29.45),
 		"C":     float64(4.86),

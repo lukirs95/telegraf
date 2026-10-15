@@ -12,18 +12,17 @@ plugin also supports various service-discovery methods.
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
-## Secret-store support
+## Secret store support
 
-This plugin supports secrets from secret-stores for the `username`, `password`
+This plugin supports secrets from secret stores for the `username`, `password`
 and `bearer_token_string` option. See the
-[secret-store documentation][SECRETSTORE] for more details on how to use them.
+[secret store documentation][SECRETSTORE] for more details on how to use them.
 
 [SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
@@ -117,6 +116,9 @@ and `bearer_token_string` option. See the
   ## The name of the label for the pod that is being scraped.
   ## Default is 'namespace' but this can conflict with metrics that have the label 'namespace'
   # pod_namespace_label_name = "namespace"
+  ## The name of the tag carrying the name of the pod that is being scraped.
+  ## Default is 'pod_name' but this can conflict with metrics that have the label 'pod_name'
+  # pod_name_label_name = "pod_name"
   # label selector to target pods which have the label
   # kubernetes_label_selector = "env=dev,app=nginx"
   # field selector to target pods
@@ -262,9 +264,12 @@ cluster, or we use the kubeconfig file to determine where to monitor.  Currently
 the following annotation are supported:
 
 * `prometheus.io/scrape` Enable scraping for this pod.
-* `prometheus.io/scheme` If the metrics endpoint is secured then you will need to set this to `https` & most likely set the tls config. (default 'http')
-* `prometheus.io/path` Override the path for the metrics endpoint on the service. (default '/metrics')
-* `prometheus.io/port` Used to override the port. (default 9102)
+* `prometheus.io/scheme` If the metrics endpoint is secured then you will need
+                         to set this to `https` & most likely set the tls config.
+                        (default 'http')
+* `prometheus.io/path`  Override the path for the metrics endpoint on the service.
+                        (default '/metrics')
+* `prometheus.io/port`  Used to override the port. (default 9102)
 
 Using the `monitor_kubernetes_pods_namespace` option allows you to limit which
 pods you are scraping.
@@ -272,6 +277,12 @@ pods you are scraping.
 The setting `pod_namespace_label_name` allows you to change the label name for
 the namespace of the pod you are scraping. The default is `namespace`, but this
 will overwrite a label with the name `namespace` from a metric scraped.
+
+Metrics scraped from a discovered pod are always tagged with the name of that
+pod, which allows distinguishing metrics originating from different replicas of
+the same workload. The setting `pod_name_label_name` allows you to change the
+label name used for it. The default is `pod_name`, but this will overwrite a
+label with the name `pod_name` from a metric scraped.
 
 Using `pod_scrape_scope = "node"` allows more scalable scraping for pods which
 will scrape pods only in the node that telegraf is running. It will fetch the
@@ -364,8 +375,10 @@ query a given http service discovery endpoint for available hosts. Using
 and refresh the list of scraped urls.  It can use the information from the
 response to build the scraped url and additional tags.
 
-More information on the format of http service discovery is found
-[here](https://prometheus.io/docs/prometheus/latest/http_sd/).
+More information on the format of http service discovery is found in the
+[prometheus documentation][http_sd].
+
+[http_sd]: https://prometheus.io/docs/prometheus/latest/http_sd
 
 ### Bearer Token
 

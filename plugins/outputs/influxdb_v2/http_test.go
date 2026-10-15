@@ -232,7 +232,7 @@ func TestRetryLaterEarlyExit(t *testing.T) {
 			map[string]string{
 				"bucket": "foo",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 0.0,
 			},
 			time.Unix(0, 0),
@@ -242,7 +242,7 @@ func TestRetryLaterEarlyExit(t *testing.T) {
 			map[string]string{
 				"bucket": "my_bucket",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42.0,
 			},
 			time.Unix(0, 1),
@@ -252,7 +252,7 @@ func TestRetryLaterEarlyExit(t *testing.T) {
 			map[string]string{
 				"bucket": "my_bucket",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 43.0,
 			},
 			time.Unix(0, 2),
@@ -262,7 +262,7 @@ func TestRetryLaterEarlyExit(t *testing.T) {
 			map[string]string{
 				"bucket": "foo",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 0.0,
 			},
 			time.Unix(0, 3),
@@ -271,7 +271,7 @@ func TestRetryLaterEarlyExit(t *testing.T) {
 
 	// Write the metrics the first time and check for the expected errors
 	err = c.Write(t.Context(), metrics)
-	require.ErrorContains(t, err, "waiting 2m0s for server before sending metrics again")
+	require.ErrorContains(t, err, "will retry in 2m0s")
 
 	var writeErr *internal.PartialWriteError
 	require.ErrorAs(t, err, &writeErr)

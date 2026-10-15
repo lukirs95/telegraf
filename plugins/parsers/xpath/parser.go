@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -17,14 +18,13 @@ import (
 	"github.com/srebhan/protobufquery"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/filter"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/parsers"
 )
 
-type dataNode interface{}
+type dataNode any
 
 type dataDocument interface {
 	Parse(buf []byte) (dataNode, error)
@@ -45,19 +45,14 @@ type Parser struct {
 	PrintDocument        bool              `toml:"xpath_print_document"`
 	AllowEmptySelection  bool              `toml:"xpath_allow_empty_selection"`
 	NativeTypes          bool              `toml:"xpath_native_types"`
-	Trace                bool              `toml:"xpath_trace" deprecated:"1.35.0;use 'log_level' 'trace' instead"`
+	Trace                bool              `toml:"xpath_trace" deprecated:"1.35.0;1.40.0;use 'log_level' 'trace' instead"`
 	Configs              []Config          `toml:"xpath"`
 	DefaultMetricName    string            `toml:"-"`
 	DefaultTags          map[string]string `toml:"-"`
 	Log                  telegraf.Logger   `toml:"-"`
 
-	// Required for backward compatibility
-	ConfigsXML     []Config `toml:"xml" deprecated:"1.23.1;1.35.0;use 'xpath' instead"`
-	ConfigsJSON    []Config `toml:"xpath_json" deprecated:"1.23.1;1.35.0;use 'xpath' instead"`
-	ConfigsMsgPack []Config `toml:"xpath_msgpack" deprecated:"1.23.1;1.35.0;use 'xpath' instead"`
-	ConfigsProto   []Config `toml:"xpath_protobuf" deprecated:"1.23.1;1.35.0;use 'xpath' instead"`
-
 	document dataDocument
+	timeFunc func() time.Time
 }
 
 type Config struct {
@@ -87,46 +82,24 @@ type Config struct {
 	Location           *time.Location
 }
 
+func (p *Parser) SetDefaultTags(tags map[string]string) {
+	p.DefaultTags = tags
+}
+
+func (p *Parser) SetTimeFunc(f func() time.Time) {
+	p.timeFunc = f
+}
+
 func (p *Parser) Init() error {
 	switch p.Format {
 	case "", "xml":
 		p.document = &xmlDocument{}
-
-		// Required for backward compatibility
-		if len(p.ConfigsXML) > 0 {
-			p.Configs = append(p.Configs, p.ConfigsXML...)
-			config.PrintOptionDeprecationNotice("parsers.xpath", "xml", telegraf.DeprecationInfo{
-				Since:     "1.23.1",
-				RemovalIn: "1.35.0",
-				Notice:    "use 'xpath' instead",
-			})
-		}
 	case "xpath_cbor":
 		p.document = &cborDocument{}
 	case "xpath_json":
 		p.document = &jsonDocument{}
-
-		// Required for backward compatibility
-		if len(p.ConfigsJSON) > 0 {
-			p.Configs = append(p.Configs, p.ConfigsJSON...)
-			config.PrintOptionDeprecationNotice("parsers.xpath", "xpath_json", telegraf.DeprecationInfo{
-				Since:     "1.23.1",
-				RemovalIn: "1.35.0",
-				Notice:    "use 'xpath' instead",
-			})
-		}
 	case "xpath_msgpack":
 		p.document = &msgpackDocument{}
-
-		// Required for backward compatibility
-		if len(p.ConfigsMsgPack) > 0 {
-			p.Configs = append(p.Configs, p.ConfigsMsgPack...)
-			config.PrintOptionDeprecationNotice("parsers.xpath", "xpath_msgpack", telegraf.DeprecationInfo{
-				Since:     "1.23.1",
-				RemovalIn: "1.35.0",
-				Notice:    "use 'xpath' instead",
-			})
-		}
 	case "xpath_protobuf":
 		if p.ProtobufMessageDef != "" && !slices.Contains(p.ProtobufMessageFiles, p.ProtobufMessageDef) {
 			p.ProtobufMessageFiles = append(p.ProtobufMessageFiles, p.ProtobufMessageDef)
@@ -142,16 +115,6 @@ func (p *Parser) Init() error {
 			return err
 		}
 		p.document = &pbdoc
-
-		// Required for backward compatibility
-		if len(p.ConfigsProto) > 0 {
-			p.Configs = append(p.Configs, p.ConfigsProto...)
-			config.PrintOptionDeprecationNotice("parsers.xpath", "xpath_proto", telegraf.DeprecationInfo{
-				Since:     "1.23.1",
-				RemovalIn: "1.35.0",
-				Notice:    "use 'xpath' instead",
-			})
-		}
 	default:
 		return fmt.Errorf("unknown data-format %q for xpath parser", p.Format)
 	}
@@ -193,11 +156,15 @@ func (p *Parser) Init() error {
 		p.Configs[i] = cfg
 	}
 
+	if p.timeFunc == nil {
+		p.timeFunc = time.Now
+	}
+
 	return nil
 }
 
 func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
-	t := time.Now()
+	t := p.timeFunc()
 
 	// Parse the XML
 	doc, err := p.document.Parse(buf)
@@ -249,10 +216,6 @@ func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
 	default:
 		return metrics[0], fmt.Errorf("cannot parse line with multiple (%d) metrics", len(metrics))
 	}
-}
-
-func (p *Parser) SetDefaultTags(tags map[string]string) {
-	p.DefaultTags = tags
 }
 
 func (p *Parser) parseQuery(starttime time.Time, doc, selected dataNode, cfg Config) (telegraf.Metric, error) {
@@ -374,12 +337,10 @@ func (p *Parser) parseQuery(starttime time.Time, doc, selected dataNode, cfg Con
 	}
 
 	// Add default tags
-	for name, v := range p.DefaultTags {
-		tags[name] = v
-	}
+	maps.Copy(tags, p.DefaultTags)
 
 	// Query fields
-	fields := make(map[string]interface{})
+	fields := make(map[string]any)
 
 	// Handle the field batch definitions if any.
 	if len(cfg.FieldSelection) > 0 {
@@ -509,7 +470,7 @@ func (p *Parser) parseQuery(starttime time.Time, doc, selected dataNode, cfg Con
 	return metric.New(metricname, tags, fields, timestamp), nil
 }
 
-func (p *Parser) executeQuery(doc, selected dataNode, query string) (r interface{}, err error) {
+func (p *Parser) executeQuery(doc, selected dataNode, query string) (r any, err error) {
 	// Check if the query is relative or absolute and set the root for the query
 	root := selected
 	if strings.HasPrefix(query, "/") {
@@ -642,8 +603,7 @@ func (p *Parser) debugEmptyQuery(operation string, root dataNode, initialquery s
 		if len(parts) < 1 {
 			return
 		}
-		for i := len(parts) - 1; i >= 0; i-- {
-			q := parts[i]
+		for _, q := range slices.Backward(parts) {
 			nodes, err := p.document.QueryAll(root, q)
 			if err != nil {
 				p.Log.Tracef("executing query %q in %s failed: %v", q, operation, err)

@@ -175,21 +175,23 @@ parsed:
   bucket = "replace_with_your_bucket_name"
 ```
 
-## Secret-store secrets
+## Secret store secrets
 
-Additional or instead of environment variables, you can use secret-stores
-to fill in credentials or similar. To do so, you need to configure one or more
-secret-store plugin(s) and then reference the secret in your plugin
+Additional or instead of environment variables, you can use secret stores to
+fill in credentials or similar. To do so, you need to configure one or more
+secret store plugin(s) and then reference the secret in your plugin
 configurations. A reference to a secret is specified in form
 `@{<secret store id>:<secret name>}`, where the `secret store id` is the unique
-ID you defined for your secret-store and `secret name` is the name of the secret
+ID you defined for your secret store and `secret name` is the name of the secret
 to use.
-**NOTE:** Both, the `secret store id` as well as the `secret name` can only
-consist of letters (both upper- and lowercase), numbers and underscores.
+
+>[!NOTE]
+> Both, the `secret store id` as well as the `secret name` can only
+> consist of letters (both upper- and lowercase), numbers and underscores.
 
 **Example**:
 
-This example illustrates the use of secret-store(s) in plugins
+This example illustrates the use of secret store(s) in plugins
 
 ```toml
 [global_tags]
@@ -358,6 +360,11 @@ The agent table configures Telegraf and the defaults used across all plugins.
   tag-filtering   via `taginclude` or `tagexclude`. This removes the need to
   specify those tags twice.
 
+- **skip_processors_before_aggregators**:
+  By default, processors are run before aggregators. Changing
+  this setting to true will skip the first run of processors. Without any
+  aggregators processors only run once.
+
 - **skip_processors_after_aggregators**:
   By default, processors are run a second time after aggregators. Changing
   this setting to true will skip the second run of processors.
@@ -372,6 +379,12 @@ The agent table configures Telegraf and the defaults used across all plugins.
 - **buffer_directory**:
   The directory to use when in `disk` buffer mode. Each output plugin will make
   another subdirectory in this directory with the output plugin's ID.
+
+- **buffer_disk_sync**:
+  Controls writes durability when "disk" buffer strategy is used.
+  No sync offers better write performance at the risk of losing metrics
+  buffered in the last `flush_interval` in the event of a power cut.
+  Defaults to 'true'.
 
 ## Plugins
 
@@ -610,7 +623,8 @@ Parameters that can be used with any aggregator plugin:
   the name of the input).
 - **name_prefix**: Specifies a prefix to attach to the measurement name.
 - **name_suffix**: Specifies a suffix to attach to the measurement name.
-- **tags**: A map of tags to apply to the measurement - behavior varies based on aggregator.
+- **tags**: A map of tags to apply to the measurement - behavior varies based on
+            aggregator.
 - **log_level**: Override the log-level for this plugin. Possible values are
   `error`, `warn`, `info` and `debug`.
 
@@ -703,26 +717,26 @@ is tested on metrics after they have passed the `tagpass` test.
 A ["Common Expression Language"][CEL] (CEL) expression with boolean result where
 `true` will allow the metric to pass, otherwise the metric is discarded. This
 filter expression is more general compared to e.g. `namepass` and also allows
-for time-based filtering. An introduction to the CEL language can be found
-[here][CEL intro]. Further details, such as available functions and expressions,
-are provided in the [language definition][CEL lang] as well as in the
-[extension documentation][CEL ext].
+for time-based filtering. Further details, such as available functions and
+expressions, are provided in the [language definition][CEL lang] as well as in
+the [extension documentation][CEL ext] or the
+[CEL language introduction][CEL intro].
 
-**NOTE:** Expressions that may be valid and compile, but fail at runtime will
-result in the expression reporting as `true`. The metrics will pass through
-as a result. An example is when reading a non-existing field. If this happens,
-the evaluation is aborted, an error is logged, and the expression is reported as
+Expressions that may be valid and compile, but fail at runtime will result in
+the expression reporting as `true`. The metrics will pass through as a result.
+An example is when reading a non-existing field. If this happens, the
+evaluation is aborted, an error is logged, and the expression is reported as
 `true`, so the metric passes.
 
-> NOTE: As CEL is an *interpreted* languguage, this type of filtering is much
-> slower compared to `namepass`/`namedrop` and friends. So consider to use the
-> more restricted filter options where possible in case of high-throughput
-> scenarios.
+> [!NOTE]
+> As CEL is an *interpreted* language, this type of filtering is much slower
+> compared to `namepass`/`namedrop` and friends. So consider to use the more
+> restricted filter options where possible in case of high-throughput scenarios.
 
-[CEL]:https://github.com/google/cel-go/tree/master
+[CEL]:https://github.com/cel-expr/cel-go
 [CEL intro]: https://codelabs.developers.google.com/codelabs/cel-go
-[CEL lang]: https://github.com/google/cel-spec/blob/master/doc/langdef.md
-[CEL ext]: https://github.com/google/cel-go/tree/master/ext#readme
+[CEL lang]: https://github.com/cel-expr/cel-spec/blob/master/doc/langdef.md
+[CEL ext]: https://github.com/cel-expr/cel-go/tree/master/ext#readme
 
 ### Modifiers
 
@@ -752,6 +766,34 @@ tag.
 The inverse of `taginclude`. Tags with a tag key matching one of the patterns
 will be discarded from the metric.  Any tag can be filtered including global
 tags and the agent `host` tag.
+
+### Order of Operations
+
+The time at which filters are applied depends on the plugin type. Understanding
+this ordering is important because it determines whether the filter acts on the
+metrics entering the plugin or on the metrics it produces.
+
+- **Input plugins** apply both selectors and modifiers *after* the plugin has
+  gathered its metrics. Only metrics that pass the selectors, with their tags
+  and fields adjusted by any modifiers, are emitted downstream.
+
+- **Processor plugins** apply filters *before* processing. Metrics matching the
+  selectors are handed to the processor (with modifiers already applied), while
+  metrics that do not match bypass the processor and are passed on unchanged.
+
+- **Aggregator plugins** apply filters *before* aggregation.
+  Selected metrics (with modifiers applied) are fed into the aggregation, while
+  metrics that do not match are passed downstream. Whether the original,
+  matching metrics are also forwarded to subsequent output plugins is controlled
+  by the aggregator's `drop_original` setting.
+
+- **Output plugins** apply filters *before* writing. Only metrics that pass the
+  selectors, with their tags and fields adjusted by any modifiers, are sent to
+  the remote destination.
+
+In all cases, [selectors](#selectors) determine *whether* a metric is handled
+by the plugin, while [modifiers](#modifiers)) determine *which tags and fields*
+remain on the metrics passed to the plugin.
 
 ### Filtering Examples
 
@@ -899,6 +941,55 @@ select the output.  The tag is removed in the outputs before writing with `tagex
     influxdb_database = "other"
 ```
 
+## Plugin selection via labels and selectors
+
+You can control which plugin instances are enabled by decorating plugins with
+labels in their config and passing one or more selectors on the command line.
+
+### Selectors
+
+Provide selectors with one or more `--select` flags when starting Telegraf. Each
+`--select` value is a semicolon-separated list of key=value pairs:
+
+```text
+<key>=<value>[;<key>=<value>]
+```
+
+- Pairs in a single `--select` value are combined with logical AND (all must
+match).
+- Multiple `--select` flags are combined with logical OR (a plugin is enabled if
+it matches any selector set).
+
+Selectors support simple glob patterns in values (for example `region=us-*`).
+
+Example:
+
+```console
+telegraf --config config.conf --config-directory directory/ \
+  --select="app=payments;region=us-*" \
+  --select="env=prod" \
+  --watch-config --print-plugin-config-source=true
+```
+
+### Labels
+
+Add an optional `labels` table to a plugin, similar to `tags`. Keys and values
+are plain strings.
+
+Example:
+
+```toml
+[[inputs.cpu]]
+  [inputs.cpu.labels]
+    app = "payments"
+    region = "us-east"
+    env = "prod"
+```
+
+Telegraf matches the command-line selectors against a plugin's labels to decide
+whether that plugin instance should be enabled. For more details on the syntax
+and matching criteria refer, [labels selectors spec][tsd010].
+
 ## Transport Layer Security (TLS)
 
 Reference the detailed [TLS][] documentation.
@@ -916,3 +1007,4 @@ Reference the detailed [TLS][] documentation.
 [TLS]: /docs/TLS.md
 [glob pattern]: https://github.com/gobwas/glob#syntax
 [flags]: /docs/COMMANDS_AND_FLAGS.md
+[tsd010]: /docs/specs/tsd-010-labels-and-selectors.md

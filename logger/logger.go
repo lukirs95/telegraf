@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/influxdata/telegraf"
 )
 
@@ -17,13 +19,24 @@ import (
 // This is necessary to be able to dynamically switch the sink even though
 // plugins already instantiated a logger _before_ the final sink is set up.
 var (
-	instance *handler  // handler for the actual output
-	once     sync.Once // once token to initialize the handler only once
+	instance   *handler                // handler for the actual output
+	callbacks  map[string]CallbackFunc // logging callback registry
+	callbackMu sync.RWMutex
+	once       sync.Once // once token to initialize the handler only once
+)
+
+// CallbackFunc is a function to be called when printing messages
+type CallbackFunc func(
+	level telegraf.LogLevel,
+	timestamp time.Time,
+	source string,
+	attributes map[string]any,
+	arguments ...any,
 )
 
 // sink interface that has to be implemented by a logging sink
 type sink interface {
-	Print(telegraf.LogLevel, time.Time, string, map[string]interface{}, ...interface{})
+	Print(telegraf.LogLevel, time.Time, string, map[string]any, ...any)
 }
 
 // logger is the actual implementation of the telegraf logger interface
@@ -33,9 +46,10 @@ type logger struct {
 	name     string
 	alias    string
 
+	source     string
 	prefix     string
 	onError    []func()
-	attributes map[string]interface{}
+	attributes map[string]any
 }
 
 // New creates a new logging instance to be used in models
@@ -44,27 +58,26 @@ func New(category, name, alias string) *logger {
 		category:   category,
 		name:       name,
 		alias:      alias,
-		attributes: map[string]interface{}{"category": category, "plugin": name},
+		attributes: map[string]any{"category": category, "plugin": name},
 	}
 	if alias != "" {
 		l.attributes["alias"] = alias
 	}
 
 	// Format the prefix
-	l.prefix = l.category
+	l.source = l.category
 
-	if l.prefix != "" && l.name != "" {
-		l.prefix += "."
+	if l.source != "" && l.name != "" {
+		l.source += "."
 	}
-	l.prefix += l.name
+	l.source += l.name
 
-	if l.prefix != "" && l.alias != "" {
-		l.prefix += "::"
+	if l.source != "" && l.alias != "" {
+		l.source += "::"
 	}
-	l.prefix += l.alias
-
-	if l.prefix != "" {
-		l.prefix = "[" + l.prefix + "] "
+	l.source += l.alias
+	if l.source != "" {
+		l.prefix = "[" + l.source + "] "
 	}
 
 	return l
@@ -79,7 +92,7 @@ func (l *logger) Level() telegraf.LogLevel {
 }
 
 // AddAttribute allows to add a key-value attribute to the logging output
-func (l *logger) AddAttribute(key string, value interface{}) {
+func (l *logger) AddAttribute(key string, value any) {
 	// Do not allow to overwrite general keys
 	switch key {
 	case "category", "plugin", "alias":
@@ -89,11 +102,11 @@ func (l *logger) AddAttribute(key string, value interface{}) {
 }
 
 // Error logging including callbacks
-func (l *logger) Errorf(format string, args ...interface{}) {
+func (l *logger) Errorf(format string, args ...any) {
 	l.Error(fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Error(args ...interface{}) {
+func (l *logger) Error(args ...any) {
 	l.Print(telegraf.Error, time.Now(), args...)
 	for _, f := range l.onError {
 		f()
@@ -101,46 +114,54 @@ func (l *logger) Error(args ...interface{}) {
 }
 
 // Warning logging
-func (l *logger) Warnf(format string, args ...interface{}) {
+func (l *logger) Warnf(format string, args ...any) {
 	l.Warn(fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Warn(args ...interface{}) {
+func (l *logger) Warn(args ...any) {
 	l.Print(telegraf.Warn, time.Now(), args...)
 }
 
 // Info logging
-func (l *logger) Infof(format string, args ...interface{}) {
+func (l *logger) Infof(format string, args ...any) {
 	l.Info(fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Info(args ...interface{}) {
+func (l *logger) Info(args ...any) {
 	l.Print(telegraf.Info, time.Now(), args...)
 }
 
 // Debug logging, this is suppressed on console
-func (l *logger) Debugf(format string, args ...interface{}) {
+func (l *logger) Debugf(format string, args ...any) {
 	l.Debug(fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Debug(args ...interface{}) {
+func (l *logger) Debug(args ...any) {
 	l.Print(telegraf.Debug, time.Now(), args...)
 }
 
 // Trace logging, this is suppressed on console
-func (l *logger) Tracef(format string, args ...interface{}) {
+func (l *logger) Tracef(format string, args ...any) {
 	l.Trace(fmt.Sprintf(format, args...))
 }
 
-func (l *logger) Trace(args ...interface{}) {
+func (l *logger) Trace(args ...any) {
 	l.Print(telegraf.Trace, time.Now(), args...)
 }
 
-func (l *logger) Print(level telegraf.LogLevel, ts time.Time, args ...interface{}) {
+func (l *logger) Print(level telegraf.LogLevel, ts time.Time, args ...any) {
 	// Check if we are in early logging state and store the message in this case
 	if instance.impl == nil {
 		instance.add(level, ts, l.prefix, l.attributes, args...)
 	}
+
+	// Serve all registered callbacks before checking the log-level. This is
+	// intentional to allow the callback to apply its own log-level filtering.
+	callbackMu.RLock()
+	for _, cb := range callbacks {
+		cb(level, ts.UTC(), l.source, l.attributes, args...)
+	}
+	callbackMu.RUnlock()
 
 	// Skip all messages with insufficient log-levels
 	if l.level != nil && !l.level.Includes(level) || l.level == nil && !instance.level.Includes(level) {
@@ -149,7 +170,7 @@ func (l *logger) Print(level telegraf.LogLevel, ts time.Time, args ...interface{
 	if instance.impl != nil {
 		instance.impl.Print(level, ts.In(instance.timezone), l.prefix, l.attributes, args...)
 	} else {
-		msg := append([]interface{}{ts.In(instance.timezone).Format(time.RFC3339), " ", level.Indicator(), " ", l.prefix}, args...)
+		msg := append([]any{ts.In(instance.timezone).Format(time.RFC3339), " ", level.Indicator(), " ", l.prefix}, args...)
 		instance.earlysink.Print(msg...)
 	}
 }
@@ -301,11 +322,40 @@ func CloseLogging() error {
 	return nil
 }
 
+// AddCallback adds the given callback function to the registry and returns an
+// ID that can be used for removing the callback later. Callback functions must
+// not block or take a lot of time!
+func AddCallback(callback CallbackFunc) (string, error) {
+	// Create a cookie to be returned to the caller in order to be able to
+	// remove the callback later
+	rawid, err := uuid.NewRandom()
+	if err != nil {
+		return "", err
+	}
+	id := rawid.String()
+
+	callbackMu.Lock()
+	callbacks[id] = callback
+	callbackMu.Unlock()
+
+	return id, nil
+}
+
+// RemoveCallback removes the callback function with the given ID from the registry
+func RemoveCallback(id string) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	delete(callbacks, id)
+}
+
 func init() {
 	once.Do(func() {
 		// Create a special logging instance that additionally buffers all
 		// messages logged before the final logger is up.
 		instance = defaultHandler()
+
+		// Setup callback registry
+		callbacks = make(map[string]CallbackFunc)
 
 		// Redirect the standard logger output to our logger instance
 		log.SetFlags(0)

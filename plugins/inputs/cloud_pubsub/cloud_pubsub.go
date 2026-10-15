@@ -10,13 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
+	common_gcp "github.com/influxdata/telegraf/plugins/common/gcp"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -134,18 +135,14 @@ func (ps *PubSub) Start(ac telegraf.Accumulator) error {
 
 	ps.wg = &sync.WaitGroup{}
 	// Start goroutine to handle delivery notifications from accumulator.
-	ps.wg.Add(1)
-	go func() {
-		defer ps.wg.Done()
+	ps.wg.Go(func() {
 		ps.waitForDelivery(ctx)
-	}()
+	})
 
 	// Start goroutine for subscription receiver.
-	ps.wg.Add(1)
-	go func() {
-		defer ps.wg.Done()
+	ps.wg.Go(func() {
 		ps.receiveWithRetry(ctx)
-	}()
+	})
 
 	return nil
 }
@@ -309,7 +306,11 @@ func (ps *PubSub) removeDelivered(id telegraf.TrackingID) message {
 func (ps *PubSub) getPubSubClient() (*pubsub.Client, error) {
 	var credsOpt option.ClientOption
 	if ps.CredentialsFile != "" {
-		credsOpt = option.WithCredentialsFile(ps.CredentialsFile)
+		credType, err := common_gcp.ParseCredentialType(ps.CredentialsFile)
+		if err != nil {
+			return nil, fmt.Errorf("unable to parse credential file type: %w", err)
+		}
+		credsOpt = option.WithAuthCredentialsFile(option.CredentialsType(credType), ps.CredentialsFile)
 	} else {
 		creds, err := google.FindDefaultCredentials(context.Background(), pubsub.ScopeCloudPlatform)
 		if err != nil {
@@ -337,7 +338,7 @@ func (ps *PubSub) getGCPSubscription(subID string) (subscription, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := client.Subscription(subID)
+	s := client.Subscriber(subID)
 	s.ReceiveSettings = pubsub.ReceiveSettings{
 		NumGoroutines:          ps.MaxReceiverGoRoutines,
 		MaxExtension:           time.Duration(ps.MaxExtension),

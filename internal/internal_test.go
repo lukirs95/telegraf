@@ -404,7 +404,7 @@ func TestParseTimestamp(t *testing.T) {
 	tests := []struct {
 		name      string
 		format    string
-		timestamp interface{}
+		timestamp any
 		location  string
 		separator []string
 		expected  time.Time
@@ -541,6 +541,138 @@ func TestParseTimestamp(t *testing.T) {
 			format:    "unix_ns",
 			timestamp: "1.5683382080000005e+18",
 			expected:  rfc3339("2019-09-13T01:30:08.000000500Z"),
+		},
+		{
+			name:      "timestamp with timezone seconds without fractional",
+			format:    "timestamp_tz",
+			timestamp: "1568338208",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with fractional",
+			format:    "timestamp_tz",
+			timestamp: "1568338208.500",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with fractional and comma decimal point",
+			format:    "timestamp_tz",
+			timestamp: "1568338208,500",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds extra precision",
+			format:    "timestamp_tz",
+			timestamp: "1568338208.00000050042",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.000000500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand separator only (dot)",
+			format:    "timestamp_tz",
+			timestamp: "1.568.338.208",
+			separator: []string{","},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand separator only (comma)",
+			format:    "timestamp_tz",
+			timestamp: "1,568,338,208",
+			separator: []string{"."},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand separator only (space)",
+			format:    "timestamp_tz",
+			timestamp: "1 568 338 208",
+			separator: []string{"."},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand separator only (underscore)",
+			format:    "timestamp_tz",
+			timestamp: "1_568_338_208",
+			separator: []string{"."},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand and decimal separator (US)",
+			format:    "timestamp_tz",
+			timestamp: "1,568,338,208.500",
+			separator: []string{"."},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds with thousand and decimal separator (EU)",
+			format:    "timestamp_tz",
+			timestamp: "1.568.338.208,500",
+			separator: []string{","},
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds integer",
+			format:    "timestamp_tz",
+			timestamp: int64(1568338208),
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds float",
+			format:    "timestamp_tz",
+			timestamp: float64(1568338208.500),
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone seconds float exponential",
+			format:    "timestamp_tz",
+			timestamp: float64(1.5683382085e+9),
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone milliseconds",
+			format:    "timestamp_tz_ms",
+			timestamp: "1568338208500",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone milliseconds with fractional",
+			format:    "timestamp_tz_ms",
+			timestamp: "1568338208500.42",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.50042+12:00"),
+		},
+		{
+			name:      "timestamp with timezone microseconds",
+			format:    "timestamp_tz_us",
+			timestamp: "1568338208000500",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.000500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone nanoseconds",
+			format:    "timestamp_tz_ns",
+			timestamp: "1568338208000000500",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.000000500+12:00"),
+		},
+		{
+			name:      "timestamp with timezone nanoseconds exponential",
+			format:    "timestamp_tz_ns",
+			timestamp: "1.5683382080000005e+18",
+			location:  "Pacific/Fiji",
+			expected:  rfc3339("2019-09-13T01:30:08.000000500+12:00"),
 		},
 		{
 			name:      "rfc339 test",
@@ -683,7 +815,7 @@ func TestParseTimestampInvalid(t *testing.T) {
 	tests := []struct {
 		name      string
 		format    string
-		timestamp interface{}
+		timestamp any
 		expected  string
 	}{
 		{
@@ -773,6 +905,34 @@ func TestTimestampAbbrevWarning(t *testing.T) {
 	require.EqualValues(t, 1136232245, ts2.Unix())
 
 	require.Contains(t, buf.String(), "Your config is using abbreviated timezones and parsing was changed in v1.27.0")
+}
+
+func TestGoVersion(t *testing.T) {
+	tests := []struct {
+		version  string
+		expected string
+	}{
+		{
+			version:  "go version go1.24.0 linux/amd64",
+			expected: "1.24.0",
+		},
+		{
+			version:  "go version go1.25.2 X:nodwarf5 linux/amd64",
+			expected: "1.25.2",
+		},
+		{
+			version:  "go version go1.26.1-X:nodwarf5 linux/amd64",
+			expected: "1.26.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			match := reGoVer.FindStringSubmatch(tt.version)
+			require.Len(t, match, 2)
+			require.Equal(t, tt.expected, match[1])
+		})
+	}
 }
 
 func TestProductToken(t *testing.T) {

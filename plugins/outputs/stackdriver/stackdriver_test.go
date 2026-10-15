@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
-	"os"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +13,7 @@ import (
 	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/option"
+	"google.golang.org/genproto/googleapis/api/distribution"
 	metricpb "google.golang.org/genproto/googleapis/api/metric"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,147 +25,105 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
 
-// clientOpt is the option tests should use to connect to the test server.
-// It is initialized by TestMain.
-var clientOpt option.ClientOption
-
-var mockMetric mockMetricServer
-
-type mockMetricServer struct {
-	// Embed for forward compatibility.
-	// Tests will keep working if more methods are added
-	// in the future.
-	monitoringpb.MetricServiceServer
-
-	reqs []proto.Message
-
-	// If set, all calls return this error.
-	err error
-
-	// responses to return if err == nil
-	resps []proto.Message
+func TestInitValueInvalid(t *testing.T) {
+	plugin := &Stackdriver{
+		MetricDataType: "foobar",
+	}
+	require.ErrorContains(t, plugin.Init(), "unrecognized metric data type")
 }
 
-func (s *mockMetricServer) CreateTimeSeries(ctx context.Context, req *monitoringpb.CreateTimeSeriesRequest) (*emptypb.Empty, error) {
-	md, _ := metadata.FromIncomingContext(ctx)
-	if xg := md["x-goog-api-client"]; len(xg) == 0 || !strings.Contains(xg[0], "gl-go/") {
-		return nil, fmt.Errorf("x-goog-api-client = %v, expected gl-go key", xg)
+func TestInitMetricNameInvalid(t *testing.T) {
+	plugin := &Stackdriver{
+		MetricNameFormat: "foobar",
 	}
-
-	s.reqs = append(s.reqs, req)
-	if s.err != nil {
-		var statusResp *status.Status
-		switch s.err.Error() {
-		case "invalid argument":
-			statusResp = status.New(codes.InvalidArgument, s.err.Error())
-		default:
-			statusResp = status.New(codes.Unknown, s.err.Error())
-		}
-
-		return nil, statusResp.Err()
-	}
-	return s.resps[0].(*emptypb.Empty), nil
-}
-
-func TestMain(m *testing.M) {
-	serv := grpc.NewServer()
-	monitoringpb.RegisterMetricServiceServer(serv, &mockMetric)
-
-	lis, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	go serv.Serve(lis) //nolint:errcheck // Ignore the returned error as the tests will fail anyway
-
-	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
-	conn, err := grpc.NewClient(lis.Addr().String(), opt)
-	if err != nil {
-		log.Fatal(err)
-	}
-	clientOpt = option.WithGRPCConn(conn)
-
-	os.Exit(m.Run())
+	require.ErrorContains(t, plugin.Init(), "unrecognized metric name format")
 }
 
 func TestWrite(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:   "projects/" + "[PROJECT]",
+	// Setup the plugin and inject the client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
 		Namespace: "test",
 		Log:       testutil.Logger{},
-		client:    c,
+		client:    client,
 	}
+	require.NoError(t, plugin.Init())
 
-	err = s.Connect()
-	require.NoError(t, err)
-	err = s.Write(testutil.MockMetrics())
-	require.NoError(t, err)
+	// Start the plugin and write a metric
+	require.NoError(t, plugin.Connect())
+	require.NoError(t, plugin.Write(testutil.MockMetrics()))
 
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Equal(t, "global", request.TimeSeries[0].Resource.Type)
-	require.Equal(t, "projects/[PROJECT]", request.TimeSeries[0].Resource.Labels["project_id"])
+	// Check the result
+	require.Len(t, server.reqs, 1)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T", server.reqs[0])
+
+	require.Len(t, request.TimeSeries, 1)
+	ts := request.TimeSeries[0]
+	require.Equal(t, "global", ts.Resource.Type)
+	require.Equal(t, "projects/[PROJECT]", ts.Resource.Labels["project_id"])
 }
 
 func TestWriteResourceTypeAndLabels(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:      "projects/" + "[PROJECT]",
+	// Setup the plugin and inject the client
+	plugin := &Stackdriver{
+		Project:      "projects/[PROJECT]",
 		Namespace:    "test",
 		ResourceType: "foo",
 		ResourceLabels: map[string]string{
 			"mylabel": "myvalue",
 		},
 		Log:    testutil.Logger{},
-		client: c,
+		client: client,
 	}
+	require.NoError(t, plugin.Init())
 
-	err = s.Connect()
-	require.NoError(t, err)
-	err = s.Write(testutil.MockMetrics())
-	require.NoError(t, err)
+	// Start the plugin and write a metric
+	require.NoError(t, plugin.Connect())
+	require.NoError(t, plugin.Write(testutil.MockMetrics()))
 
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Equal(t, "foo", request.TimeSeries[0].Resource.Type)
-	require.Equal(t, "projects/[PROJECT]", request.TimeSeries[0].Resource.Labels["project_id"])
-	require.Equal(t, "myvalue", request.TimeSeries[0].Resource.Labels["mylabel"])
+	// Check the result
+	require.Len(t, server.reqs, 1)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T", server.reqs[0])
+
+	require.Len(t, request.TimeSeries, 1)
+	ts := request.TimeSeries[0]
+	require.Equal(t, "foo", ts.Resource.Type)
+	require.Equal(t, "projects/[PROJECT]", ts.Resource.Labels["project_id"])
+	require.Equal(t, "myvalue", ts.Resource.Labels["mylabel"])
 }
 
 func TestWriteTagsAsResourceLabels(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:              "projects/" + "[PROJECT]",
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:              "projects/[PROJECT]",
 		Namespace:            "test",
 		ResourceType:         "foo",
 		TagsAsResourceLabels: []string{"job_name"},
@@ -175,44 +131,50 @@ func TestWriteTagsAsResourceLabels(t *testing.T) {
 			"mylabel": "myvalue",
 		},
 		Log:    testutil.Logger{},
-		client: c,
+		client: client,
 	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
 
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("cpu",
+	// Write the metrics
+	input := []telegraf.Metric{
+		metric.New(
+			"cpu",
 			map[string]string{
 				"job_name": "cpu",
 				"mytag":    "foo",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(2, 0),
 		),
-		testutil.MustMetric("mem",
+		metric.New(
+			"mem",
 			map[string]string{
 				"job_name": "mem",
 				"mytag":    "bar",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(2, 0),
 		),
 	}
+	require.NoError(t, plugin.Write(input))
 
-	require.NoError(t, s.Connect())
-	require.NoError(t, s.Write(metrics))
-	require.Len(t, mockMetric.reqs, 1)
+	// Check the result
+	require.Len(t, server.reqs, 1)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T", server.reqs[0])
 
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
 	require.Len(t, request.TimeSeries, 2)
 	for _, ts := range request.TimeSeries {
 		switch ts.Metric.Type {
-		case "test_mem_value/unknown":
-			require.Equal(t, "mem", ts.Resource.Labels["job_name"])
-		case "test_cpu_value/unknown":
+		case "custom.googleapis.com/test/cpu/value":
 			require.Equal(t, "cpu", ts.Resource.Labels["job_name"])
+		case "custom.googleapis.com/test/mem/value":
+			require.Equal(t, "mem", ts.Resource.Labels["job_name"])
 		default:
 			require.Failf(t, "Wrong metric type", "Unknown metric type: %v", ts.Metric.Type)
 		}
@@ -220,18 +182,16 @@ func TestWriteTagsAsResourceLabels(t *testing.T) {
 }
 
 func TestWriteMetricTypesOfficial(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:   "projects/" + "[PROJECT]",
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
 		Namespace: "test",
 		ResourceLabels: map[string]string{
 			"mylabel": "myvalue",
@@ -241,28 +201,30 @@ func TestWriteMetricTypesOfficial(t *testing.T) {
 		MetricGauge:      []string{"mem_g"},
 		MetricHistogram:  []string{"mem_h"},
 		Log:              testutil.Logger{},
-		client:           c,
+		client:           client,
 	}
-	require.NoError(t, s.Init())
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
 
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("mem_g",
+	// Write the metrics
+	input := []telegraf.Metric{
+		metric.New("mem_g",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("mem_c",
+		metric.New("mem_c",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("mem_h",
+		metric.New("mem_h",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"sum":   1,
 				"count": 1,
 				"5.0":   0.0,
@@ -274,12 +236,13 @@ func TestWriteMetricTypesOfficial(t *testing.T) {
 			telegraf.Histogram,
 		),
 	}
+	require.NoError(t, plugin.Write(input))
 
-	require.NoError(t, s.Connect())
-	require.NoError(t, s.Write(metrics))
-	require.Len(t, mockMetric.reqs, 1)
+	// Check the result
+	require.Len(t, server.reqs, 1)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T", server.reqs[0])
 
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
 	require.Len(t, request.TimeSeries, 3)
 	for _, ts := range request.TimeSeries {
 		switch ts.Metric.Type {
@@ -296,18 +259,16 @@ func TestWriteMetricTypesOfficial(t *testing.T) {
 }
 
 func TestWriteMetricTypesPath(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:   "projects/" + "[PROJECT]",
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
 		Namespace: "test",
 		ResourceLabels: map[string]string{
 			"mylabel": "myvalue",
@@ -316,32 +277,35 @@ func TestWriteMetricTypesPath(t *testing.T) {
 		MetricCounter:    []string{"mem_c"},
 		MetricGauge:      []string{"mem_g"},
 		Log:              testutil.Logger{},
-		client:           c,
+		client:           client,
 	}
-	require.NoError(t, s.Init())
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
 
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("mem_g",
+	// Write the metrics
+	input := []telegraf.Metric{
+		metric.New("mem_g",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("mem_c",
+		metric.New("mem_c",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(3, 0),
 		),
 	}
+	require.NoError(t, plugin.Write(input))
 
-	require.NoError(t, s.Connect())
-	require.NoError(t, s.Write(metrics))
-	require.Len(t, mockMetric.reqs, 1)
+	// Check the result
+	require.Len(t, server.reqs, 1)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T", server.reqs[0])
 
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
 	require.Len(t, request.TimeSeries, 2)
 	for _, ts := range request.TimeSeries {
 		switch ts.Metric.Type {
@@ -356,298 +320,1018 @@ func TestWriteMetricTypesPath(t *testing.T) {
 }
 
 func TestWriteAscendingTime(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:   "projects/" + "[PROJECT]",
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
 		Namespace: "test",
 		Log:       testutil.Logger{},
-		client:    c,
+		client:    client,
 	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
 
-	// Metrics in descending order of timestamp
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("cpu",
+	// Write the metrics in descending order of timestamp
+	input := []telegraf.Metric{
+		metric.New("cpu",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(2, 0),
 		),
-		testutil.MustMetric("cpu",
+		metric.New("cpu",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value": 43,
 			},
 			time.Unix(1, 0),
 		),
 	}
+	require.NoError(t, plugin.Write(input))
 
-	err = s.Connect()
-	require.NoError(t, err)
-	err = s.Write(metrics)
-	require.NoError(t, err)
+	// Check the result
+	require.Len(t, server.reqs, 2)
+	request, ok := server.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T for first request", server.reqs[0])
 
-	require.Len(t, mockMetric.reqs, 2)
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
 	require.Len(t, request.TimeSeries, 1)
 	ts := request.TimeSeries[0]
 	require.Len(t, ts.Points, 1)
-	require.Equal(t,
-		&monitoringpb.TimeInterval{
-			EndTime: &timestamppb.Timestamp{
-				Seconds: 1,
-			},
-		}, ts.Points[0].Interval)
-	require.Equal(t,
-		&monitoringpb.TypedValue{
-			Value: &monitoringpb.TypedValue_Int64Value{
-				Int64Value: int64(43),
-			},
-		}, ts.Points[0].Value)
+	require.Equal(t, &monitoringpb.TimeInterval{EndTime: &timestamppb.Timestamp{Seconds: 1}}, ts.Points[0].Interval)
+	require.Equal(t, &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: int64(43)}}, ts.Points[0].Value)
 
-	request = mockMetric.reqs[1].(*monitoringpb.CreateTimeSeriesRequest)
+	request, ok = server.reqs[1].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T for second request", server.reqs[1])
+
 	require.Len(t, request.TimeSeries, 1)
 	ts = request.TimeSeries[0]
 	require.Len(t, ts.Points, 1)
-	require.Equal(t,
-		&monitoringpb.TimeInterval{
-			EndTime: &timestamppb.Timestamp{
-				Seconds: 2,
-			},
-		}, ts.Points[0].Interval)
-	require.Equal(t, &monitoringpb.TypedValue{
-		Value: &monitoringpb.TypedValue_Int64Value{
-			Int64Value: int64(42),
-		},
-	}, ts.Points[0].Value)
+	require.Equal(t, &monitoringpb.TimeInterval{EndTime: &timestamppb.Timestamp{Seconds: 2}}, ts.Points[0].Interval)
+	require.Equal(t, &monitoringpb.TypedValue{Value: &monitoringpb.TypedValue_Int64Value{Int64Value: int64(42)}}, ts.Points[0].Value)
 }
 
 func TestWriteBatchable(t *testing.T) {
-	expectedResponse := &emptypb.Empty{}
-	mockMetric.err = nil
-	mockMetric.reqs = nil
-	mockMetric.resps = append(mockMetric.resps[:0], expectedResponse)
-
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
+	// Start the test-server
+	server := &mockServer{
+		resps: []proto.Message{&emptypb.Empty{}},
 	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
 
-	s := &Stackdriver{
-		Project:   "projects/" + "[PROJECT]",
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
 		Namespace: "test",
 		Log:       testutil.Logger{},
-		client:    c,
+		client:    client,
 	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
 
-	// Metrics in descending order of timestamp
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("cpu",
+	// Write the metrics in descending order of timestamp
+	input := []telegraf.Metric{
+		metric.New("cpu",
 			map[string]string{
 				"foo": "bar",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 42,
 			},
 			time.Unix(2, 0),
 		),
-		testutil.MustMetric("cpu",
+		metric.New("cpu",
 			map[string]string{
 				"foo": "foo",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 43,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("cpu",
+		metric.New("cpu",
 			map[string]string{
 				"foo": "bar",
 			},
-			map[string]interface{}{
-				"value": 43,
+			map[string]any{
+				"value": 41,
 			},
 			time.Unix(1, 0),
 		),
-		testutil.MustMetric("ram",
+		metric.New("ram",
 			map[string]string{
 				"foo": "bar",
 			},
-			map[string]interface{}{
-				"value": 42,
+			map[string]any{
+				"value": 44,
 			},
 			time.Unix(4, 0),
 		),
-		testutil.MustMetric("ram",
+		metric.New("ram",
 			map[string]string{
 				"foo": "foo",
 			},
-			map[string]interface{}{
-				"value": 43,
+			map[string]any{
+				"value": 45,
 			},
 			time.Unix(5, 0),
 		),
-		testutil.MustMetric("ram",
+		metric.New("ram",
 			map[string]string{
 				"foo": "bar",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 43,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("disk",
+		metric.New("disk",
 			map[string]string{
 				"foo": "foo",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"value": 43,
 			},
 			time.Unix(3, 0),
 		),
-		testutil.MustMetric("disk",
+		metric.New("disk",
 			map[string]string{
 				"foo": "bar",
 			},
-			map[string]interface{}{
-				"value": 43,
+			map[string]any{
+				"value": 41,
 			},
 			time.Unix(1, 0),
 		),
 	}
+	require.NoError(t, plugin.Write(input))
 
-	err = s.Connect()
-	require.NoError(t, err)
-	err = s.Write(metrics)
-	require.NoError(t, err)
-
-	require.Len(t, mockMetric.reqs, 5)
-
-	// Request 1 with two time series
-	request := mockMetric.reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Len(t, request.TimeSeries, 2)
-	ts := request.TimeSeries[0]
-	require.Len(t, ts.Points, 1)
-	require.Equal(t,
-		&monitoringpb.TimeInterval{
-			EndTime: &timestamppb.Timestamp{
-				Seconds: 1,
+	// Check the result
+	expected := [][]*monitoringpb.TimeSeries{
+		{
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 1,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(41),
+							},
+						},
+					},
+				},
 			},
-		}, ts.Points[0].Interval)
-	require.Equal(t,
-		&monitoringpb.TypedValue{
-			Value: &monitoringpb.TypedValue_Int64Value{
-				Int64Value: int64(43),
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 1,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(41),
+							},
+						},
+					},
+				},
 			},
-		}, ts.Points[0].Value)
-
-	ts = request.TimeSeries[1]
-	require.Len(t, ts.Points, 1)
-	require.Equal(t,
-		&monitoringpb.TimeInterval{
-			EndTime: &timestamppb.Timestamp{
-				Seconds: 1,
+		},
+		{
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 2,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(42),
+							},
+						},
+					},
+				},
 			},
-		}, ts.Points[0].Interval)
-	require.Equal(t,
-		&monitoringpb.TypedValue{
-			Value: &monitoringpb.TypedValue_Int64Value{
-				Int64Value: int64(43),
+		},
+		{
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 3,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(43),
+							},
+						},
+					},
+				},
 			},
-		}, ts.Points[0].Value)
-
-	// Request 2 with 1 time series
-	request = mockMetric.reqs[1].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Len(t, request.TimeSeries, 1)
-	require.Len(t, ts.Points, 1)
-	require.Equal(t, &monitoringpb.TimeInterval{
-		EndTime: &timestamppb.Timestamp{
-			Seconds: 2,
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 3,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(43),
+							},
+						},
+					},
+				},
+			},
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 3,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(43),
+							},
+						},
+					},
+				},
+			},
 		},
-	}, request.TimeSeries[0].Points[0].Interval)
-
-	// Request 3 with 1 time series with 1 point
-	request = mockMetric.reqs[2].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Len(t, request.TimeSeries, 3)
-	require.Len(t, request.TimeSeries[0].Points, 1)
-	require.Len(t, request.TimeSeries[1].Points, 1)
-	require.Len(t, request.TimeSeries[2].Points, 1)
-	require.Equal(t, &monitoringpb.TimeInterval{
-		EndTime: &timestamppb.Timestamp{
-			Seconds: 3,
+		{
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 4,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(44),
+							},
+						},
+					},
+				},
+			},
 		},
-	}, request.TimeSeries[0].Points[0].Interval)
-
-	// Request 4 with 1 time series with 1 point
-	request = mockMetric.reqs[3].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Len(t, request.TimeSeries, 1)
-	require.Len(t, request.TimeSeries[0].Points, 1)
-	require.Equal(t, &monitoringpb.TimeInterval{
-		EndTime: &timestamppb.Timestamp{
-			Seconds: 4,
+		{
+			{
+				Points: []*monitoringpb.Point{
+					{
+						Interval: &monitoringpb.TimeInterval{
+							EndTime: &timestamppb.Timestamp{
+								Seconds: 5,
+							},
+						},
+						Value: &monitoringpb.TypedValue{
+							Value: &monitoringpb.TypedValue_Int64Value{
+								Int64Value: int64(45),
+							},
+						},
+					},
+				},
+			},
 		},
-	}, request.TimeSeries[0].Points[0].Interval)
+	}
 
-	// Request 5 with 1 time series with 1 point
-	request = mockMetric.reqs[4].(*monitoringpb.CreateTimeSeriesRequest)
-	require.Len(t, request.TimeSeries, 1)
-	require.Len(t, request.TimeSeries[0].Points, 1)
-	require.Equal(t, &monitoringpb.TimeInterval{
-		EndTime: &timestamppb.Timestamp{
-			Seconds: 5,
-		},
-	}, request.TimeSeries[0].Points[0].Interval)
+	require.Len(t, server.reqs, len(expected))
+	for i, r := range server.reqs {
+		request, ok := r.(*monitoringpb.CreateTimeSeriesRequest)
+		require.Truef(t, ok, "Invalid request type %T for request %d", r, i)
+
+		expectedTS := expected[i]
+		require.Lenf(t, request.TimeSeries, len(expectedTS), "Mismatch for number of timeseries in request %d", i)
+		for j, ets := range expectedTS {
+			ts := request.TimeSeries[j]
+			require.Lenf(t, ts.Points, len(ets.Points), "Mismatch for number of point in request %d in timeseries %d", i, j)
+			for k, epoint := range ets.Points {
+				point := ts.Points[k]
+				require.Equalf(t, epoint, point, "Mismatch for request %d in timeseries %d and point %d", i, j, k)
+			}
+		}
+	}
 }
 
-func TestWriteIgnoredErrors(t *testing.T) {
+func TestWriteIgnoreError(t *testing.T) {
+	// Start the test-server
+	server := &mockServer{err: errors.New("invalid argument")}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// Write a metric, the resulting error should be ignored
+	require.NoError(t, plugin.Write(testutil.MockMetrics()))
+}
+
+func TestWritePassthroughErrors(t *testing.T) {
+	// Start the test-server
+	server := &mockServer{err: errors.New("unknown")}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// Write the metrics in descending order of timestamp
+	require.ErrorContains(t, plugin.Write(testutil.MockMetrics()), "desc = unknown")
+}
+
+func TestWriteDropsFailedPrecondition(t *testing.T) {
+	// FAILED_PRECONDITION is a permanent rejection. Retrying it re-sends points
+	// that already landed, which produces the duplicates that caused the error.
+	server := &mockServer{
+		errForCall: map[int]error{
+			1: status.New(codes.FailedPrecondition, "one or more points were written more frequently than the maximum sampling period").Err(),
+		},
+	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	require.NoError(t, plugin.Write(testutil.MockMetrics()))
+	require.Len(t, server.reqs, 1)
+}
+
+func TestWriteSendsRemainingChunksAfterPermanentFailure(t *testing.T) {
+	// Previously the first chunk failing with InvalidArgument returned nil, so
+	// the later chunks were never sent and Telegraf still cleared the batch.
+	server := &mockServer{
+		errForCall: map[int]error{
+			1: status.New(codes.InvalidArgument, "bad point in first chunk").Err(),
+		},
+	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// 250 distinct series sharing one timestamp: one group, chunks of 200 and 50
+	input := make([]telegraf.Metric, 0, 250)
+	for i := range 250 {
+		input = append(input, metric.New(
+			fmt.Sprintf("series_%03d", i),
+			map[string]string{},
+			map[string]any{
+				"value": 42,
+			},
+			time.Unix(1, 0),
+		))
+	}
+
+	// The failure is permanent, so the batch must not be handed back to Telegraf
+	require.NoError(t, plugin.Write(input))
+
+	reqs := server.reqs
+	require.Len(t, reqs, 2, "the chunk following the failed one must still be sent")
+	first, ok := reqs[0].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T for request 0", reqs[0])
+	require.Len(t, first.TimeSeries, 200)
+	second, ok := reqs[1].(*monitoringpb.CreateTimeSeriesRequest)
+	require.Truef(t, ok, "Invalid request type %T for request 1", reqs[1])
+	require.Len(t, second.TimeSeries, 50)
+}
+
+func TestWriteSendsRemainingTimestampGroupsAfterPermanentFailure(t *testing.T) {
+	// The outer loop in Write must not abandon later timestamp groups when an
+	// earlier group is permanently rejected.
+	server := &mockServer{
+		errForCall: map[int]error{
+			1: status.New(codes.InvalidArgument, "bad point in first group").Err(),
+		},
+	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// Two distinct timestamps produce two groups, hence two requests
+	input := []telegraf.Metric{
+		metric.New(
+			"first",
+			map[string]string{},
+			map[string]any{
+				"value": 42,
+			},
+			time.Unix(1, 0),
+		),
+		metric.New(
+			"second",
+			map[string]string{},
+			map[string]any{
+				"value": 43,
+			},
+			time.Unix(2, 0),
+		),
+	}
+
+	require.NoError(t, plugin.Write(input))
+	require.Len(t, server.reqs, 2, "the timestamp group following the failed one must still be sent")
+}
+
+func TestWriteRetryableOnLaterChunkPropagates(t *testing.T) {
+	// A retryable failure must be returned even when earlier chunks succeeded.
+	server := &mockServer{
+		errForCall: map[int]error{
+			2: status.New(codes.Unavailable, "backend down").Err(),
+		},
+	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// 250 distinct series sharing one timestamp: one group, chunks of 200 and 50
+	input := make([]telegraf.Metric, 0, 250)
+	for i := range 250 {
+		input = append(input, metric.New(
+			fmt.Sprintf("series_%03d", i),
+			map[string]string{},
+			map[string]any{
+				"value": 42,
+			},
+			time.Unix(1, 0),
+		))
+	}
+
+	require.ErrorContains(t, plugin.Write(input), "backend down")
+	require.Len(t, server.reqs, 2, "the earlier chunk must still have been sent")
+}
+
+func TestWritePermanentThenRetryableReturnsError(t *testing.T) {
+	// A retryable failure after a permanent one must still be returned.
+	server := &mockServer{
+		errForCall: map[int]error{
+			1: status.New(codes.InvalidArgument, "bad point in first chunk").Err(),
+			2: status.New(codes.Unavailable, "backend down").Err(),
+		},
+	}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// 250 distinct series sharing one timestamp: one group, chunks of 200 and 50
+	input := make([]telegraf.Metric, 0, 250)
+	for i := range 250 {
+		input = append(input, metric.New(
+			fmt.Sprintf("series_%03d", i),
+			map[string]string{},
+			map[string]any{
+				"value": 42,
+			},
+			time.Unix(1, 0),
+		))
+	}
+
+	require.ErrorContains(t, plugin.Write(input), "backend down")
+	require.Len(t, server.reqs, 2)
+}
+
+func TestWriteErrorClassification(t *testing.T) {
+	// Retryable codes are returned so Telegraf replays the batch; permanent ones
+	// are dropped so it drains.
 	tests := []struct {
-		name        string
-		err         error
-		expectedErr bool
+		name      string
+		code      codes.Code
+		retryable bool
+	}{
+		{"canceled", codes.Canceled, true},
+		{"unavailable", codes.Unavailable, true},
+		{"deadline exceeded", codes.DeadlineExceeded, true},
+		{"resource exhausted", codes.ResourceExhausted, true},
+		{"aborted", codes.Aborted, true},
+		{"internal", codes.Internal, true},
+		{"unknown", codes.Unknown, true},
+		// Auth failures are transient in practice and must not drop metrics
+		{"unauthenticated", codes.Unauthenticated, true},
+		{"permission denied", codes.PermissionDenied, true},
+		{"invalid argument", codes.InvalidArgument, false},
+		{"failed precondition", codes.FailedPrecondition, false},
+		{"out of range", codes.OutOfRange, false},
+		{"not found", codes.NotFound, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &mockServer{
+				errForCall: map[int]error{
+					1: status.New(tt.code, "rejected").Err(),
+				},
+			}
+			srv, client := startServer(t, server)
+			defer srv.GracefulStop()
+
+			// Setup and start the plugin with the injected client
+			plugin := &Stackdriver{
+				Project:   "projects/[PROJECT]",
+				Namespace: "test",
+				Log:       testutil.Logger{},
+				client:    client,
+			}
+			require.NoError(t, plugin.Init())
+			require.NoError(t, plugin.Connect())
+
+			err := plugin.Write(testutil.MockMetrics())
+			if tt.retryable {
+				require.ErrorContains(t, err, "desc = rejected")
+			} else {
+				require.NoError(t, err, "a permanent rejection must be dropped, not retried")
+			}
+			require.Len(t, server.reqs, 1)
+		})
+	}
+}
+
+func TestIntervalEndpoints(t *testing.T) {
+	// Start the test-server
+	server := &mockServer{err: errors.New("invalid argument")}
+	srv, client := startServer(t, server)
+	defer srv.GracefulStop()
+
+	// Setup and start the plugin with the injected client
+	plugin := &Stackdriver{
+		Project:   "projects/[PROJECT]",
+		Namespace: "test",
+		Log:       testutil.Logger{},
+		client:    client,
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Connect())
+
+	// Prepare the ime for the metrics and the margins to check the sent
+	// request against. Subtracting a millisecond is required because the first
+	// metrics will create a time-range where the upper and lower bound is the
+	// same, however such time-ranges cannot be sent to Stackdriver and
+	// therefore the plugin slightly lowers the lower bound by one millisecond.
+	now := time.Now().UTC()
+	earlier := now.Add(-1 * time.Millisecond)
+	later := time.Now().UTC().Add(time.Second * 10)
+
+	// Metrics in descending order of timestamp
+	metrics := []telegraf.Metric{
+		metric.New("cpu",
+			map[string]string{
+				"foo": "bar",
+			},
+			map[string]any{
+				"value": 42,
+			},
+			now,
+			telegraf.Gauge,
+		),
+		metric.New("cpu",
+			map[string]string{
+				"foo": "foo",
+			},
+			map[string]any{
+				"value": 43,
+			},
+			later,
+			telegraf.Gauge,
+		),
+		metric.New("uptime",
+			map[string]string{
+				"foo": "bar",
+			},
+			map[string]any{
+				"value": 42,
+			},
+			now,
+			telegraf.Counter,
+		),
+		metric.New("uptime",
+			map[string]string{
+				"foo": "foo",
+			},
+			map[string]any{
+				"value": 43,
+			},
+			later,
+			telegraf.Counter,
+		),
+	}
+
+	for idx, m := range metrics {
+		for _, f := range m.FieldList() {
+			value, err := plugin.getStackdriverTypedValue(f.Value)
+			require.NoError(t, err)
+			require.NotNilf(t, value, "Got nil value for metric %q field %q", m, f)
+
+			metricKind, err := getStackdriverMetricKind(m.Type())
+			require.NoErrorf(t, err, "Get kind for metric %q (%T) field %q failed: %v", m.Name(), m.Type(), f, err)
+
+			startTime, endTime := getStackdriverIntervalEndpoints(metricKind, value, m, f, plugin.counterCache)
+
+			// we only generate startTimes for counters
+			if metricKind != metricpb.MetricDescriptor_CUMULATIVE {
+				require.Nilf(t, startTime, "startTime for non-counter metric %q (%T) field %q should be nil, was: %v", m.Name(), m.Type(), f, startTime)
+			} else {
+				if idx%2 == 0 {
+					// We require greater-or-equal because we might pass a
+					// second boundary while the test is running and new start
+					// times are backdated 1ms from the end time.
+					require.GreaterOrEqual(t, startTime.AsTime().UTC().Unix(), earlier.UTC().Unix())
+				} else {
+					require.LessOrEqual(t, startTime.AsTime().UTC().Unix(), later.UTC().Unix())
+				}
+			}
+
+			if idx%2 == 0 {
+				require.Equal(t, now, endTime.AsTime())
+			} else {
+				require.Equal(t, later, endTime.AsTime())
+			}
+		}
+	}
+}
+
+func TestTypedValuesSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected any
+		value    any
 	}{
 		{
-			name:        "other errors reported",
-			err:         errors.New("unknown"),
-			expectedErr: true,
+			name:     "float",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    float64(44.0),
 		},
 		{
-			name:        "invalid argument",
-			err:         errors.New("invalid argument"),
-			expectedErr: false,
+			name:     "int64",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_Int64Value{},
+			value:    int64(46),
+		},
+		{
+			name:     "uint",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_Int64Value{},
+			value:    uint64(46),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockMetric.err = tt.err
-			mockMetric.reqs = nil
-
-			c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-			if err != nil {
-				t.Fatal(err)
+			plugin := &Stackdriver{
+				Namespace:        "namespace",
+				MetricTypePrefix: "foo",
+				MetricDataType:   "source",
 			}
 
-			s := &Stackdriver{
-				Project:   "projects/" + "[PROJECT]",
-				Namespace: "test",
-				Log:       testutil.Logger{},
-				client:    c,
+			value, err := plugin.getStackdriverTypedValue(tt.value)
+			require.NoError(t, err)
+			require.IsType(t, tt.expected, value.Value)
+		})
+	}
+}
+
+func TestTypedValuesInt64(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected any
+		value    any
+	}{
+		{
+			name:     "int",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    42,
+		},
+		{
+			name:     "float",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    float64(44.0),
+		},
+		{
+			name:     "int64",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    int64(46),
+		},
+		{
+			name:     "uint",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    uint64(46),
+		},
+		{
+			name:     "numeric string",
+			key:      "key",
+			expected: &monitoringpb.TypedValue_DoubleValue{},
+			value:    "3.2",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Stackdriver{
+				Namespace:        "namespace",
+				MetricTypePrefix: "foo",
+				MetricDataType:   "double",
+			}
+			value, err := plugin.getStackdriverTypedValue(tt.value)
+			require.NoError(t, err)
+			require.IsType(t, tt.expected, value.Value)
+		})
+	}
+}
+
+func TestMetricNamePath(t *testing.T) {
+	s := &Stackdriver{
+		Namespace:        "namespace",
+		MetricTypePrefix: "foo",
+		MetricNameFormat: "path",
+	}
+	m := metric.New("uptime",
+		map[string]string{
+			"foo": "bar",
+		},
+		map[string]any{
+			"value": 42,
+		},
+		time.Now(),
+		telegraf.Gauge,
+	)
+	require.Equal(t, "foo/namespace/uptime/key", s.generateMetricName(m, m.Type(), "key"))
+}
+
+func TestMetricNameOfficial(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+		metric   telegraf.Metric
+	}{
+		{
+			name:     "gauge",
+			key:      "key",
+			expected: "prometheus.googleapis.com/namespace_uptime_key/gauge",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{
+					"value": 42,
+				},
+				time.Now(),
+				telegraf.Gauge,
+			),
+		},
+		{
+			name:     "untyped",
+			key:      "key",
+			expected: "prometheus.googleapis.com/namespace_uptime_key/unknown",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{
+					"value": 42,
+				},
+				time.Now(),
+				telegraf.Untyped,
+			),
+		},
+		{
+			name:     "histogram",
+			key:      "key",
+			expected: "prometheus.googleapis.com/namespace_uptime_key/histogram",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{
+					"value": 42,
+				},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:     "counter",
+			key:      "key",
+			expected: "prometheus.googleapis.com/namespace_uptime_key/counter",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{
+					"value": 42,
+				},
+				time.Now(),
+				telegraf.Counter,
+			),
+		},
+		{
+			name:     "summary",
+			key:      "key",
+			expected: "prometheus.googleapis.com/namespace_uptime_key",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{
+					"value": 42,
+				},
+				time.Now(),
+				telegraf.Summary,
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Stackdriver{
+				Namespace:        "namespace",
+				MetricTypePrefix: "prometheus.googleapis.com",
+				MetricNameFormat: "official",
 			}
 
-			require.NoError(t, s.Connect())
-			if tt.expectedErr {
-				require.Error(t, s.Write(testutil.MockMetrics()))
-			} else {
-				require.NoError(t, s.Write(testutil.MockMetrics()))
+			name := plugin.generateMetricName(tt.metric, tt.metric.Type(), tt.key)
+			require.Equal(t, tt.expected, name)
+		})
+	}
+}
+
+func TestGenerateHistogramName(t *testing.T) {
+	tests := []struct {
+		name      string
+		prefix    string
+		namespace string
+		format    string
+		expected  string
+
+		metric telegraf.Metric
+	}{
+		{
+			name:      "path",
+			prefix:    "",
+			namespace: "",
+			format:    "path",
+			expected:  "uptime",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:      "path with namespace",
+			prefix:    "",
+			namespace: "name",
+			format:    "path",
+			expected:  "name/uptime",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:      "path with namespace+prefix",
+			prefix:    "prefix",
+			namespace: "name",
+			format:    "path",
+			expected:  "prefix/name/uptime",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:      "official",
+			prefix:    "",
+			namespace: "",
+			format:    "official",
+			expected:  "uptime/histogram",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:      "official with namespace",
+			prefix:    "",
+			namespace: "name",
+			format:    "official",
+			expected:  "name_uptime/histogram",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+		{
+			name:      "official with prefix+namespace",
+			prefix:    "prefix",
+			namespace: "name",
+			format:    "official",
+			expected:  "prefix/name_uptime/histogram",
+			metric: metric.New(
+				"uptime",
+				map[string]string{},
+				map[string]any{"value": 42},
+				time.Now(),
+				telegraf.Histogram,
+			),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Stackdriver{
+				Namespace:        tt.namespace,
+				MetricTypePrefix: tt.prefix,
+				MetricNameFormat: tt.format,
 			}
+
+			name := plugin.generateHistogramName(tt.metric)
+			require.Equal(t, tt.expected, name)
 		})
 	}
 }
@@ -698,425 +1382,16 @@ func TestGetStackdriverLabels(t *testing.T) {
 		},
 	}
 
-	s := &Stackdriver{
-		Log: testutil.Logger{},
-	}
-
-	labels := s.getStackdriverLabels(tags)
+	plugin := &Stackdriver{Log: testutil.Logger{}}
+	labels := plugin.getStackdriverLabels(tags)
 	require.Len(t, labels, QuotaLabelsPerMetricDescriptor)
 }
 
-func TestGetStackdriverIntervalEndpoints(t *testing.T) {
-	c, err := monitoring.NewMetricClient(t.Context(), clientOpt)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s := &Stackdriver{
-		Project:      "projects/" + "[PROJECT]",
-		Namespace:    "test",
-		Log:          testutil.Logger{},
-		client:       c,
-		counterCache: NewCounterCache(testutil.Logger{}),
-	}
-
-	now := time.Now().UTC()
-	later := time.Now().UTC().Add(time.Second * 10)
-
-	// Metrics in descending order of timestamp
-	metrics := []telegraf.Metric{
-		testutil.MustMetric("cpu",
-			map[string]string{
-				"foo": "bar",
-			},
-			map[string]interface{}{
-				"value": 42,
-			},
-			now,
-			telegraf.Gauge,
-		),
-		testutil.MustMetric("cpu",
-			map[string]string{
-				"foo": "foo",
-			},
-			map[string]interface{}{
-				"value": 43,
-			},
-			later,
-			telegraf.Gauge,
-		),
-		testutil.MustMetric("uptime",
-			map[string]string{
-				"foo": "bar",
-			},
-			map[string]interface{}{
-				"value": 42,
-			},
-			now,
-			telegraf.Counter,
-		),
-		testutil.MustMetric("uptime",
-			map[string]string{
-				"foo": "foo",
-			},
-			map[string]interface{}{
-				"value": 43,
-			},
-			later,
-			telegraf.Counter,
-		),
-	}
-
-	for idx, m := range metrics {
-		for _, f := range m.FieldList() {
-			value, err := s.getStackdriverTypedValue(f.Value)
-			require.NoError(t, err)
-			require.NotNilf(t, value, "Got nil value for metric %q field %q", m, f)
-
-			metricKind, err := getStackdriverMetricKind(m.Type())
-			require.NoErrorf(t, err, "Get kind for metric %q (%T) field %q failed: %v", m.Name(), m.Type(), f, err)
-
-			startTime, endTime := getStackdriverIntervalEndpoints(metricKind, value, m, f, s.counterCache)
-
-			// we only generate startTimes for counters
-			if metricKind != metricpb.MetricDescriptor_CUMULATIVE {
-				require.Nilf(t, startTime, "startTime for non-counter metric %q (%T) field %q should be nil, was: %v", m.Name(), m.Type(), f, startTime)
-			} else {
-				if idx%2 == 0 {
-					// greaterorequal because we might pass a second boundary while the test is running
-					// and new startTimes are backdated 1ms from the endTime.
-					require.GreaterOrEqual(t, startTime.AsTime().UTC().Unix(), now.UTC().Unix())
-				} else {
-					require.GreaterOrEqual(t, startTime.AsTime().UTC().Unix(), later.UTC().Unix())
-				}
-			}
-
-			if idx%2 == 0 {
-				require.Equal(t, now, endTime.AsTime())
-			} else {
-				require.Equal(t, later, endTime.AsTime())
-			}
-		}
-	}
-}
-
-func TestStackdriverTypedValuesSource(t *testing.T) {
-	s := &Stackdriver{
-		Namespace:        "namespace",
-		MetricTypePrefix: "foo",
-		MetricDataType:   "source",
-	}
-
-	tests := []struct {
-		name     string
-		key      string
-		expected string
-		value    any
-	}{
-		{
-			name:     "float",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    float64(44.0),
-		},
-		{
-			name:     "int64",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_Int64Value",
-			value:    int64(46),
-		},
-		{
-			name:     "uint",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_Int64Value",
-			value:    uint64(46),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			typedValue, err := s.getStackdriverTypedValue(tt.value)
-			require.NoError(t, err)
-			require.Equal(t, tt.expected, reflect.TypeOf(typedValue.Value).String())
-		})
-	}
-}
-
-func TestStackdriverTypedValuesInt64(t *testing.T) {
-	s := &Stackdriver{
-		Namespace:        "namespace",
-		MetricTypePrefix: "foo",
-		MetricDataType:   "double",
-	}
-
-	tests := []struct {
-		name     string
-		key      string
-		expected string
-		value    any
-	}{
-		{
-			name:     "int",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    42,
-		},
-		{
-			name:     "float",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    float64(44.0),
-		},
-		{
-			name:     "int64",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    int64(46),
-		},
-		{
-			name:     "uint",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    uint64(46),
-		},
-		{
-			name:     "numeric string",
-			key:      "key",
-			expected: "*monitoringpb.TypedValue_DoubleValue",
-			value:    "3.2",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			typedValue, err := s.getStackdriverTypedValue(tt.value)
-			require.NoError(t, err)
-			require.Equal(t, tt.expected, reflect.TypeOf(typedValue.Value).String())
-		})
-	}
-}
-
-func TestStackdriverMetricNamePath(t *testing.T) {
-	s := &Stackdriver{
-		Namespace:        "namespace",
-		MetricTypePrefix: "foo",
-		MetricNameFormat: "path",
-	}
-	m := testutil.MustMetric("uptime",
-		map[string]string{
-			"foo": "bar",
-		},
-		map[string]interface{}{
-			"value": 42,
-		},
-		time.Now(),
-		telegraf.Gauge,
-	)
-	require.Equal(t, "foo/namespace/uptime/key", s.generateMetricName(m, m.Type(), "key"))
-}
-
-func TestStackdriverMetricNameOfficial(t *testing.T) {
-	s := &Stackdriver{
-		Namespace:        "namespace",
-		MetricTypePrefix: "prometheus.googleapis.com",
-		MetricNameFormat: "official",
-	}
-
-	tests := []struct {
-		name     string
-		key      string
-		expected string
-		metric   telegraf.Metric
-	}{
-		{
-			name:     "gauge",
-			key:      "key",
-			expected: "prometheus.googleapis.com/namespace_uptime_key/gauge",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{
-					"value": 42,
-				},
-				time.Now(),
-				telegraf.Gauge,
-			),
-		},
-		{
-			name:     "untyped",
-			key:      "key",
-			expected: "prometheus.googleapis.com/namespace_uptime_key/unknown",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{
-					"value": 42,
-				},
-				time.Now(),
-				telegraf.Untyped,
-			),
-		},
-		{
-			name:     "histogram",
-			key:      "key",
-			expected: "prometheus.googleapis.com/namespace_uptime_key/histogram",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{
-					"value": 42,
-				},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:     "counter",
-			key:      "key",
-			expected: "prometheus.googleapis.com/namespace_uptime_key/counter",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{
-					"value": 42,
-				},
-				time.Now(),
-				telegraf.Counter,
-			),
-		},
-		{
-			name:     "summary",
-			key:      "key",
-			expected: "prometheus.googleapis.com/namespace_uptime_key",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{
-					"value": 42,
-				},
-				time.Now(),
-				telegraf.Summary,
-			),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, s.generateMetricName(tt.metric, tt.metric.Type(), tt.key))
-		})
-	}
-}
-
-func TestGenerateHistogramName(t *testing.T) {
-	tests := []struct {
-		name      string
-		prefix    string
-		namespace string
-		format    string
-		expected  string
-
-		metric telegraf.Metric
-	}{
-		{
-			name:      "path",
-			prefix:    "",
-			namespace: "",
-			format:    "path",
-			expected:  "uptime",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:      "path with namespace",
-			prefix:    "",
-			namespace: "name",
-			format:    "path",
-			expected:  "name/uptime",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:      "path with namespace+prefix",
-			prefix:    "prefix",
-			namespace: "name",
-			format:    "path",
-			expected:  "prefix/name/uptime",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:      "official",
-			prefix:    "",
-			namespace: "",
-			format:    "official",
-			expected:  "uptime/histogram",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:      "official with namespace",
-			prefix:    "",
-			namespace: "name",
-			format:    "official",
-			expected:  "name_uptime/histogram",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-		{
-			name:      "official with prefix+namespace",
-			prefix:    "prefix",
-			namespace: "name",
-			format:    "official",
-			expected:  "prefix/name_uptime/histogram",
-			metric: metric.New(
-				"uptime",
-				map[string]string{},
-				map[string]interface{}{"value": 42},
-				time.Now(),
-				telegraf.Histogram,
-			),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &Stackdriver{
-				Namespace:        tt.namespace,
-				MetricTypePrefix: tt.prefix,
-				MetricNameFormat: tt.format,
-			}
-
-			require.Equal(t, tt.expected, s.generateHistogramName(tt.metric))
-		})
-	}
-}
-
 func TestBuildHistogram(t *testing.T) {
-	m := testutil.MustMetric(
+	m := metric.New(
 		"http_server_duration",
 		map[string]string{},
-		map[string]interface{}{
+		map[string]any{
 			"sum":   1,
 			"count": 2,
 			"5.0":   0.0,
@@ -1128,29 +1403,101 @@ func TestBuildHistogram(t *testing.T) {
 		},
 		time.Unix(0, 0),
 	)
+
+	expected := &distribution.Distribution{
+		Count:        2,
+		Mean:         0.5,
+		BucketCounts: []int64{0, 1, 0, 1, 1},
+		BucketOptions: &distribution.Distribution_BucketOptions{
+			Options: &distribution.Distribution_BucketOptions_ExplicitBuckets{
+				ExplicitBuckets: &distribution.Distribution_BucketOptions_Explicit{
+					Bounds: []float64{5.0, 10.0, 15.0, 20.0},
+				},
+			},
+		},
+	}
+
 	value, err := buildHistogram(m)
 	require.NoError(t, err)
-
-	dist := value.GetDistributionValue()
-	require.NotNil(t, dist)
-	require.Equal(t, int64(2), dist.Count)
-	require.InDelta(t, 0.5, dist.Mean, testutil.DefaultDelta)
-	require.Len(t, dist.BucketCounts, 5)
-	require.Equal(t, []int64{0, 1, 0, 1, 1}, dist.BucketCounts)
-	require.Len(t, dist.BucketOptions.GetExplicitBuckets().Bounds, 4)
-	require.Equal(t, []float64{5.0, 10.0, 15.0, 20.0}, dist.BucketOptions.GetExplicitBuckets().Bounds)
+	require.Equal(t, expected, value.GetDistributionValue())
 }
 
-func TestStackdriverValueInvalid(t *testing.T) {
-	s := &Stackdriver{
-		MetricDataType: "foobar",
-	}
-	require.Error(t, s.Init())
+func TestSecretTokenSource(t *testing.T) {
+	secret := config.NewSecret([]byte("my-access-token"))
+	ts := &secretTokenSource{secret: &secret}
+
+	token, err := ts.Token()
+	require.NoError(t, err)
+	require.Equal(t, "my-access-token", token.AccessToken)
+	require.Equal(t, "Bearer", token.TokenType)
 }
 
-func TestStackdriverMetricNameInvalid(t *testing.T) {
-	s := &Stackdriver{
-		MetricNameFormat: "foobar",
+func startServer(t *testing.T, mock *mockServer) (*grpc.Server, *monitoring.MetricClient) {
+	t.Helper()
+
+	// Setup the server
+	server := grpc.NewServer()
+	monitoringpb.RegisterMetricServiceServer(server, mock)
+
+	listener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err, "creating listener")
+
+	//nolint:errcheck // Ignore the returned error as the tests will fail anyway
+	go server.Serve(listener)
+
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err, "starting GRPC client")
+	options := option.WithGRPCConn(conn)
+	client, err := monitoring.NewMetricClient(t.Context(), options)
+	require.NoError(t, err, "starting monitoring client")
+
+	return server, client
+}
+
+type mockServer struct {
+	// Embed for forward compatibility.
+	// Tests will keep working if more methods are added
+	// in the future.
+	monitoringpb.MetricServiceServer
+
+	reqs []proto.Message
+
+	// If set, all calls return this error.
+	err error
+
+	// Errors to return for individual calls, keyed by the one-based call
+	// number. Calls without an entry succeed.
+	errForCall map[int]error
+
+	// responses to return if err == nil
+	resps []proto.Message
+}
+
+func (s *mockServer) CreateTimeSeries(ctx context.Context, req *monitoringpb.CreateTimeSeriesRequest) (*emptypb.Empty, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	if xg := md["x-goog-api-client"]; len(xg) == 0 || !strings.Contains(xg[0], "gl-go/") {
+		return nil, fmt.Errorf("x-goog-api-client = %v, expected gl-go key", xg)
 	}
-	require.Error(t, s.Init())
+
+	s.reqs = append(s.reqs, req)
+
+	if s.errForCall != nil {
+		if err, ok := s.errForCall[len(s.reqs)]; ok {
+			return nil, err
+		}
+		return &emptypb.Empty{}, nil
+	}
+
+	if s.err != nil {
+		var statusResp *status.Status
+		switch s.err.Error() {
+		case "invalid argument":
+			statusResp = status.New(codes.InvalidArgument, s.err.Error())
+		default:
+			statusResp = status.New(codes.Unknown, s.err.Error())
+		}
+
+		return nil, statusResp.Err()
+	}
+	return s.resps[0].(*emptypb.Empty), nil
 }

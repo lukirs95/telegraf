@@ -5,12 +5,13 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/internal/snmp"
+	"github.com/influxdata/telegraf/plugins/common/snmp"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -24,6 +25,9 @@ type Snmp struct {
 
 	// The tag used to name the agent host
 	AgentHostTag string `toml:"agent_host_tag"`
+
+	// Stop collection when receiving errors from an agent
+	StopOnError bool `toml:"stop_on_error"`
 
 	snmp.ClientConfig
 
@@ -88,6 +92,8 @@ func (s *Snmp) Init() error {
 		})
 	}
 
+	s.GosnmpDebugLogger = s.Log
+
 	return nil
 }
 
@@ -111,12 +117,22 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
 			topTags := make(map[string]string)
 			if err := s.gatherTable(acc, gs, t, topTags, false); err != nil {
 				acc.AddError(fmt.Errorf("agent %s: %w", agent, err))
+				// Close the connection so the next request reconnects and, for
+				// SNMPv3, rediscovers the engine ID of a restarted agent.
+				gs.Close()
+				if s.StopOnError {
+					return
+				}
 			}
 
 			// Now is the real tables.
 			for _, t := range s.Tables {
 				if err := s.gatherTable(acc, gs, t, topTags, true); err != nil {
 					acc.AddError(fmt.Errorf("agent %s: gathering table %s: %w", agent, t.Name, err))
+					gs.Close()
+					if s.StopOnError {
+						return
+					}
 				}
 			}
 		}(i, agent)
@@ -135,9 +151,7 @@ func (s *Snmp) gatherTable(acc telegraf.Accumulator, gs snmp.Connection, t snmp.
 	for _, tr := range rt.Rows {
 		if !walk {
 			// top-level table. Add tags to topTags.
-			for k, v := range tr.Tags {
-				topTags[k] = v
-			}
+			maps.Copy(topTags, tr.Tags)
 		} else {
 			// real table. Inherit any specified tags.
 			for _, k := range t.InheritTags {
@@ -192,15 +206,13 @@ func (s *Snmp) getConnection(idx int) (snmp.Connection, error) {
 func init() {
 	inputs.Add("snmp", func() telegraf.Input {
 		return &Snmp{
-			Name: "snmp",
-			ClientConfig: snmp.ClientConfig{
-				Retries:        3,
-				MaxRepetitions: 10,
-				Timeout:        config.Duration(5 * time.Second),
-				Version:        2,
-				Path:           []string{"/usr/share/snmp/mibs"},
-				Community:      "public",
-			},
+			Name:           "snmp",
+			Retries:        3,
+			MaxRepetitions: 10,
+			Timeout:        config.Duration(5 * time.Second),
+			Version:        2,
+			Path:           []string{"/usr/share/snmp/mibs"},
+			Community:      "public",
 		}
 	})
 }

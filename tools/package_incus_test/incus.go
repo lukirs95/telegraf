@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	incus "github.com/lxc/incus/v6/client"
-	"github.com/lxc/incus/v6/shared/api"
+	incus "github.com/lxc/incus/v7/client"
+	"github.com/lxc/incus/v7/shared/api"
 )
 
 var (
@@ -100,12 +100,13 @@ func (c *IncusClient) Delete(name string) error {
 	return op.Wait()
 }
 
-// Run a command returning result struct. Will kill commands that take longer
+// Exec runs a command returning result struct. Will kill commands that take longer
 // than 120 seconds.
 func (c *IncusClient) Exec(name string, command ...string) error {
 	fmt.Printf("$ %s\n", strings.Join(command, " "))
 
-	cmd := []string{"/usr/bin/timeout", "-k", strconv.Itoa(killTimeout), strconv.Itoa(timeout)}
+	cmd := make([]string, 0, len(command)+4)
+	cmd = append(cmd, "/usr/bin/timeout", "-k", strconv.Itoa(killTimeout), strconv.Itoa(timeout))
 	cmd = append(cmd, command...)
 	req := api.InstanceExecPost{
 		Command:   cmd,

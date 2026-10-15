@@ -17,7 +17,6 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/plugins/common/socket"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	parsers_influx_upstream "github.com/influxdata/telegraf/plugins/parsers/influx/influx_upstream"
 	"github.com/influxdata/telegraf/testutil"
@@ -62,11 +61,9 @@ func TestAddressDefaultPort(t *testing.T) {
 func TestReadTimeoutWarning(t *testing.T) {
 	logger := &testutil.CaptureLogger{}
 	plugin := &Syslog{
-		Address: "tcp://localhost:6514",
-		Config: socket.Config{
-			ReadTimeout: config.Duration(time.Second),
-		},
-		Log: logger,
+		Address:     "tcp://localhost:6514",
+		ReadTimeout: config.Duration(time.Second),
+		Log:         logger,
 	}
 	require.NoError(t, plugin.Init())
 
@@ -80,6 +77,23 @@ func TestReadTimeoutWarning(t *testing.T) {
 
 	warnings := logger.Warnings()
 	require.Contains(t, warnings, "W! [] "+readTimeoutMsg)
+}
+
+func TestMessageSizeDefault(t *testing.T) {
+	plugin := &Syslog{Log: testutil.Logger{}}
+	require.NoError(t, plugin.Init())
+
+	require.Equal(t, config.Size(0), plugin.MaxMessageLength)
+}
+
+func TestMessageSizeCustom(t *testing.T) {
+	plugin := &Syslog{
+		MaxMessageLength: config.Size(16384),
+		Log:              testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+
+	require.Equal(t, config.Size(16384), plugin.MaxMessageLength)
 }
 
 func TestUnixgram(t *testing.T) {
@@ -124,7 +138,7 @@ func TestUnixgram(t *testing.T) {
 				"hostname": "web1",
 				"appname":  "someservice",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"version":       uint16(1),
 				"timestamp":     time.Unix(1456029177, 0).UnixNano(),
 				"procid":        "2341",
@@ -268,20 +282,26 @@ func TestCases(t *testing.T) {
 			require.Eventually(t, func() bool {
 				return int(acc.NMetrics()) >= len(expected)
 			}, 3*time.Second, 100*time.Millisecond)
+
+			// Check for errors
+			if expectedError != "" {
+				require.Eventually(t, func() bool {
+					acc.Lock()
+					defer acc.Unlock()
+					for _, err := range acc.Errors {
+						if strings.Contains(err.Error(), expectedError) {
+							return true
+						}
+					}
+					return false
+				}, 3*time.Second, 100*time.Millisecond, "expected error was not found")
+			}
 			plugin.Stop()
 
 			actual := acc.GetTelegrafMetrics()
 			testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime())
 
-			// Check for errors
-			if expectedError != "" {
-				require.NotEmpty(t, acc.Errors)
-				var found bool
-				for _, err := range acc.Errors {
-					found = found || strings.Contains(err.Error(), expectedError)
-				}
-				require.Truef(t, found, "expected error %q not found in errors %v", expectedError, acc.Errors)
-			} else {
+			if expectedError == "" {
 				require.Empty(t, acc.Errors)
 			}
 		})
@@ -291,11 +311,9 @@ func TestCases(t *testing.T) {
 func TestSocketClosed(t *testing.T) {
 	// Setup the plugin
 	plugin := &Syslog{
-		Address: "tcp://127.0.0.1:0",
-		Config: socket.Config{
-			ReadTimeout: config.Duration(10 * time.Millisecond),
-		},
-		Log: testutil.Logger{},
+		Address:     "tcp://127.0.0.1:0",
+		ReadTimeout: config.Duration(10 * time.Millisecond),
+		Log:         testutil.Logger{},
 	}
 	require.NoError(t, plugin.Init())
 
@@ -328,11 +346,9 @@ func TestSocketClosed(t *testing.T) {
 func TestIssue10121(t *testing.T) {
 	// Setup the plugin
 	plugin := &Syslog{
-		Address: "tcp://127.0.0.1:0",
-		Config: socket.Config{
-			ReadTimeout: config.Duration(10 * time.Millisecond),
-		},
-		Log: testutil.Logger{},
+		Address:     "tcp://127.0.0.1:0",
+		ReadTimeout: config.Duration(10 * time.Millisecond),
+		Log:         testutil.Logger{},
 	}
 	require.NoError(t, plugin.Init())
 

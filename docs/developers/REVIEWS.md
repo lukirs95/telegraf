@@ -1,37 +1,57 @@
 # Reviews
 
-Pull-requests require two approvals before being merged. Expect several rounds of back and forth on
-reviews, non-trivial changes are rarely accepted on the first pass. It might take some time
-until you see a first review so please be patient.
+Pull-requests require two approvals before being merged. Expect several rounds
+of back and forth on reviews, non-trivial changes are rarely accepted on the
+first pass. It might take some time until you see a first review so please be
+patient.
 
 All pull requests should follow the style and best practices in the
-[CONTRIBUTING.md](https://github.com/influxdata/telegraf/blob/master/CONTRIBUTING.md)
-document.
+[CONTRIBUTING.md](/CONTRIBUTING.md) document.
 
 ## Process
 
 The review process is roughly structured as follows:
 
 1. Submit a pull request.
-Please check that you signed the [CLA](https://www.influxdata.com/legal/cla/) (and [Corporate CLA](https://www.influxdata.com/legal/ccla/) if you are contributing code on as an employee of your company). Provide a short description of your submission and reference issues that you potentially close. Make sure the CI tests are all green and there are no linter-issues.
+   Please check that you signed the [CLA](https://www.influxdata.com/legal/cla/)
+   (and [Corporate CLA](https://www.influxdata.com/legal/ccla/) if you are
+   contributing code on as an employee of your company). Provide a short
+   description of your submission and reference issues that you potentially
+   close. Make sure the CI tests are all green and there are no linter-issues.
 1. Get feedback from a first reviewer and a `ready for final review` tag.
-Please constructively work with the reviewer to get your code into a mergeable state (see also [below](#reviewing-plugin-code)).
-1. Get a final review by one of the InfluxData maintainers.
-Please fix any issue raised.
-1. Wait for the pull-request to be merged.
-It might take some time until your PR gets merged, depending on the release cycle and the type of
-your pull-request (bugfix, enhancement of existing code, new plugin, etc). Remember, it might be necessary to rebase your code before merge to resolve conflicts.
+   Please constructively work with the reviewer to get your code into a
+   mergeable state (see also [below](#reviewing-plugin-code)).
+1. Get a final review by one of the InfluxData maintainers. Please fix any issue
+   raised.
+1. Wait for the pull-request to be merged. It might take some time until your PR
+   gets merged, depending on the release cycle and the type of your pull-request
+   (bugfix, enhancement of existing code, new plugin, etc). Remember, it might
+   be necessary to rebase your code before merge to resolve conflicts.
 
-Please read the review comments carefully, fix the related part of the code and/or respond in case there is anything unclear. Maintainers will add the `waiting for response` tag to PRs to make it clear we are waiting on the submitter for updates. __Once the tag is added, if there is no activity on a pull request or the contributor does not respond, our bot will automatically close the PR after two weeks!__ If you expect a longer period of inactivity or you want to abandon a pull request, please let us know.
+Please read the review comments carefully, fix the related part of the code
+and/or respond in case there is anything unclear. Maintainers will add the
+`waiting for response` tag to PRs to make it clear we are waiting on the
+submitter for updates.
 
-In case you still want to continue with the PR, feel free to reopen it.
+> [!IMPORTANT]
+> If there is no activity on a pull request or the contributor does not respond
+> after the tag was added, our bot will automatically close the PR after two
+> weeks! If you expect a longer period of inactivity or you want to abandon a
+> pull request, please let us know.
+
+In case you still want to continue with the PR, please drop a note in the PR
+so we can reopen it.
 
 ## Reviewing Plugin Code
 
-- Avoid variables scoped to the package. Everything should be scoped to the plugin struct, since multiple instances of the same plugin are allowed and package-level variables will cause race conditions.
+- Avoid variables scoped to the package. Everything should be scoped to the
+  plugin struct, since multiple instances of the same plugin are allowed and
+  package-level variables will cause race conditions.
 - SampleConfig must match the readme, but not include the plugin name.
-- structs should include toml tags for fields that are expected to be editable from the config. eg `toml:"command"` (snake_case)
-- plugins that want to log should declare the Telegraf logger, not use the log package. eg:
+- structs should include toml tags for fields that are expected to be editable
+  from the config. eg `toml:"command"` (snake_case)
+- plugins that want to log should declare the Telegraf logger, not use the log
+  package. eg:
 
 ```Go
   Log telegraf.Logger `toml:"-"`
@@ -39,38 +59,77 @@ In case you still want to continue with the PR, feel free to reopen it.
 
 (in tests, you can do `myPlugin.Log = testutil.Logger{}`)
 
-- Initialization and config checking should be done on the `Init() error` function, not in the Connect, Gather, or Start functions.
-- `Init() error` should not contain connections to external services. If anything fails in Init, Telegraf will consider it a configuration error and refuse to start.
-- plugins should avoid synchronization code if they are not starting goroutines. Plugin functions are never called in parallel.
-- avoid goroutines when you don't need them and removing them would simplify the code
+- Initialization and config checking should be done on the `Init() error`
+  function, not in the Connect, Gather, or Start functions.
+- `Init() error` should not contain connections to external services. If
+  anything fails in Init, Telegraf will consider it a configuration error and
+  refuse to start.
+- plugins should avoid synchronization code if they are not starting goroutines.
+  Plugin functions are never called in parallel.
+- avoid goroutines when you don't need them and removing them would simplify the
+  code
 - errors should almost always be checked.
-- avoid boolean fields when a string or enumerated type would be better for future extension. Lots of boolean fields also make the code difficult to maintain.
+- avoid boolean fields when a string or enumerated type would be better for
+  future extension. Lots of boolean fields also make the code difficult to
+  maintain.
 - use config.Duration instead of internal.Duration
 - compose tls.ClientConfig as opposed to specifying all the TLS fields manually
-- http.Client should be declared once on `Init() error` and reused, (or better yet, on the package if there's no client-specific configuration). http.Client has built-in concurrency protection and reuses connections transparently when possible.
-- avoid doing network calls in loops where possible, as this has a large performance cost. This isn't always possible to avoid.
-- when processing batches of records with multiple network requests (some outputs that need to partition writes do this), return an error when you want the whole batch to be retried, log the error when you want the batch to continue without the record
-- consider using the StreamingProcessor interface instead of the (legacy) Processor interface
-- avoid network calls in processors when at all possible. If it's necessary, it's possible, but complicated (see processor.reversedns).
+- http.Client should be declared once on `Init() error` and reused, (or better
+  yet, on the package if there's no client-specific configuration).
+  `http.Client` has built-in concurrency protection and reuses connections
+  transparently when possible.
+- avoid doing network calls in loops where possible, as this has a large
+  performance cost. This isn't always possible to avoid.
+- when processing batches of records with multiple network requests (some
+  outputs that need to partition writes do this), return an error when you want
+  the whole batch to be retried, log the error when you want the batch to
+  continue without the record
+- consider using the StreamingProcessor interface instead of the (legacy)
+  Processor interface
+- avoid network calls in processors when at all possible. If it's necessary,
+  it's possible, but complicated (see processor.reversedns).
 - avoid dependencies when:
   - they require cgo
   - they pull in massive projects instead of small libraries
   - they could be replaced by a simple http call
   - they seem unnecessary, superfluous, or gratuitous
 - consider adding build tags if plugins have OS-specific considerations
-- use the right logger log levels so that Telegraf is normally quiet eg `plugin.Log.Debugf()` only shows up when running Telegraf with `--debug`
-- consistent field types: dynamically setting the type of a field should be strongly avoided as it causes problems that are difficult to solve later, made worse by having to worry about backwards compatibility in future changes. For example, if an numeric value comes from a string field and it is not clear if the field can sometimes be a float, the author should pick either a float or an int, and parse that field consistently every time. Better to sometimes truncate a float, or to always store ints as floats, rather than changing the field type, which causes downstream problems with output databases.
-- backwards compatibility: We work hard not to break existing configurations during new changes. Upgrading Telegraf should be a seamless transition. Possible tools to make this transition smooth are:
-  - enumerable type fields that allow you to customize behavior (avoid boolean feature flags)
-  - version fields that can be used to opt in to newer changed behavior without breaking old (see inputs.mysql for example)
-  - a new version of the plugin if it has changed significantly (eg outputs.influxdb and outputs.influxdb_v2)
+- use the right logger log levels so that Telegraf is normally quiet eg
+ `plugin.Log.Debugf()` only shows up when running Telegraf with `--debug`
+- consistent field types: dynamically setting the type of a field should be
+  strongly avoided as it causes problems that are difficult to solve later,
+  made worse by having to worry about backwards compatibility in future changes.
+  For example, if an numeric value comes from a string field and it is not clear
+  if the field can sometimes be a float, the author should pick either a float
+  or an int, and parse that field consistently every time. Better to sometimes
+  truncate a float, or to always store ints as floats, rather than changing the
+  field type, which causes downstream problems with output databases.
+- backwards compatibility: We work hard not to break existing configurations
+  during new changes. Upgrading Telegraf should be a seamless transition.
+  Possible tools to make this transition smooth are:
+  - enumerable type fields that allow you to customize behavior
+    (avoid boolean feature flags)
+  - version fields that can be used to opt in to newer changed behavior without
+    breaking old (see inputs.mysql for example)
+  - a new version of the plugin if it has changed significantly
+    (e.g. `outputs.influxdb` and `outputs.influxdb_v2`)
   - Logger and README deprecation warnings
-  - changing the default value of a field can be okay, but will affect users who have not specified the field and should be approached cautiously.
-  - The general rule here is "don't surprise me": users should not be caught off-guard by unexpected or breaking changes.
+  - changing the default value of a field can be okay, but will affect users who
+    have not specified the field and should be approached cautiously.
+  - The general rule here is "don't surprise me": users should not be caught
+    off-guard by unexpected or breaking changes.
 
 ## Linting
 
-Each pull request will have the appropriate linters checking the files for any common mistakes. The github action Super Linter is used: [super-linter](https://github.com/github/super-linter). If it is failing you can click on the action and read the logs to figure out the issue. You can also run the github action locally by following these instructions: [run-linter-locally.md](https://github.com/github/super-linter/blob/main/docs/run-linter-locally.md). You can find more information on each of the linters in the super linter readme.
+Each pull request will have the appropriate linters checking the files for any
+common mistakes using the [Super Linter][superlinter] github action. If it is
+failing you can click on the action and read the logs to figure out the issue.
+You can also run the [github action locally][superlinter_local] for faster
+feedback. You can find more information on each of the linters in the super
+linter readme.
+
+[superlinter]: https://github.com/github/super-linter
+[superlinter_local]: https://github.com/github/super-linter/blob/main/docs/run-linter-locally.md
 
 ## Testing
 
@@ -96,8 +155,7 @@ require.Equal(t, lhs, rhs) # good
 
 The config file is the primary interface and should be carefully scrutinized.
 
-Ensure the [[SampleConfig]] and
-[README](https://github.com/influxdata/telegraf/blob/master/plugins/inputs/EXAMPLE_README.md)
+Ensure the example configuration and [README](/plugins/inputs/EXAMPLE_README.md)
 match with the current standards.
 
 READMEs should:
@@ -105,23 +163,24 @@ READMEs should:
 - be spaces, not tabs
 - be indented consistently, matching other READMEs
 - have two `#` for comments
-- have one `#` for defaults, which should always match the default value of the plugin
+- have one `#` for optional options with the value being the default
 - include all appropriate types as a list for enumerable field types
 - include a useful example, avoiding "example", "test", etc.
 - include tips for any common problems
-- include example output from the plugin, if input/processor/aggregator/parser/serializer
+- include example output from the plugin if the plugin outputs data
 
 ## Metric Schema
 
 Telegraf metrics are heavily based on InfluxDB points, but have some
 extensions to support other outputs and metadata.
 
-New metrics must follow the recommended
-[schema design](https://docs.influxdata.com/influxdb/latest/concepts/schema_and_data_layout/).
+New metrics must follow the [recommended schema design][influx_schema_design].
 Each metric should be evaluated for _series cardinality_, proper use of tags vs
 fields, and should use existing patterns for encoding metrics.
 
 Metrics use `snake_case` naming style.
+
+[influx_schema_design]: https://docs.influxdata.com/influxdb/v1/concepts/schema_and_data_layout/
 
 ### Enumerations
 

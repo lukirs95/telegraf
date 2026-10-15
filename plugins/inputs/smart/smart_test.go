@@ -2,7 +2,10 @@ package smart
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"os"
+	"os/exec"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -70,7 +74,7 @@ func TestGatherAttributes(t *testing.T) {
 			err := s.Gather(&acc)
 
 			require.NoError(t, err)
-			require.Equal(t, 32, acc.NFields(), "Wrong number of fields gathered")
+			require.Equal(t, 43, acc.NFields(), "Wrong number of fields gathered")
 
 			testutil.RequireMetricsEqual(t, testSmartctlNVMeAttributes, acc.GetTelegrafMetrics(),
 				testutil.SortMetrics(), testutil.IgnoreTime())
@@ -172,7 +176,7 @@ func TestGatherNoAttributes(t *testing.T) {
 		err := s.Gather(&acc)
 
 		require.NoError(t, err)
-		require.Equal(t, 13, acc.NFields(), "Wrong number of fields gathered")
+		require.Equal(t, 24, acc.NFields(), "Wrong number of fields gathered")
 		acc.AssertDoesNotContainMeasurement(t, "smart_attribute")
 
 		for _, test := range testsAda0Device {
@@ -233,6 +237,114 @@ func TestGatherSATAInfo65(t *testing.T) {
 	require.Equal(t, uint64(18), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
+func TestGatherSATAInfo75(t *testing.T) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
+		return []byte(seagateSATAInfoData75), nil
+	}
+
+	var (
+		acc = &testutil.Accumulator{}
+		wg  = &sync.WaitGroup{}
+	)
+
+	wg.Add(1)
+	sampleSmart.gatherDisk(acc, "", wg)
+
+	require.Equal(t, 135, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, uint64(25), acc.NMetrics(), "Wrong number of metrics gathered")
+
+	for _, test := range testsSeagateSATADevice {
+		acc.AssertContainsTaggedFields(t, "smart_device", test.fields, test.tags)
+	}
+}
+
+func TestGatherSATAInfoHoursDuration(t *testing.T) {
+	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
+		return []byte(seagateSMRSATAInfoData75), nil
+	}
+
+	var acc testutil.Accumulator
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	sampleSmart.gatherDisk(&acc, "/dev/sdc", wg)
+
+	// Attributes reported as "182h+39m+24.879s" keep their raw value in
+	// seconds but must end up as whole hours in power_on_hours, consistent
+	// with drives reporting a plain hour count
+	expected := []telegraf.Metric{
+		metric.New(
+			"smart_device",
+			map[string]string{
+				"capacity": "2000398934016",
+				"device":   "sdc",
+				"enabled":  "Enabled",
+				"model":    "ST2000DM008-2UB102",
+			},
+			map[string]any{
+				"command_timeout":            int64(0),
+				"end_to_end_error":           int64(0),
+				"exit_status":                int(0),
+				"health_ok":                  bool(true),
+				"pending_sector_count":       int64(0),
+				"power_cycle_count":          int64(3),
+				"power_on_hours":             int64(182),
+				"read_error_rate":            float64(0),
+				"reallocated_sectors_count":  int64(0),
+				"seek_error_rate":            float64(0),
+				"spin_retry_count":           int64(0),
+				"temp_c":                     int64(35),
+				"udma_crc_errors":            int64(0),
+				"uncorrectable_errors":       int64(0),
+				"uncorrectable_sector_count": int64(0),
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"smart_attribute",
+			map[string]string{
+				"capacity": "2000398934016",
+				"device":   "sdc",
+				"enabled":  "Enabled",
+				"fail":     "-",
+				"flags":    "-O--CK",
+				"id":       "9",
+				"model":    "ST2000DM008-2UB102",
+				"name":     "Power_On_Hours",
+			},
+			map[string]any{
+				"exit_status": int(0),
+				"raw_value":   int64(657564),
+				"threshold":   int64(0),
+				"value":       int64(100),
+				"worst":       int64(100),
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"smart_attribute",
+			map[string]string{
+				"capacity": "2000398934016",
+				"device":   "sdc",
+				"enabled":  "Enabled",
+				"fail":     "-",
+				"flags":    "------",
+				"id":       "240",
+				"model":    "ST2000DM008-2UB102",
+				"name":     "Head_Flying_Hours",
+			},
+			map[string]any{
+				"exit_status": int(0),
+				"raw_value":   int64(650902),
+				"threshold":   int64(0),
+				"value":       int64(100),
+				"worst":       int64(253),
+			},
+			time.Unix(0, 0),
+		),
+	}
+	testutil.RequireMetricsSubset(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+}
+
 func TestGatherHgstSAS(t *testing.T) {
 	runCmd = func(config.Duration, bool, string, ...string) ([]byte, error) {
 		return []byte(hgstSASInfoData), nil
@@ -278,7 +390,7 @@ func TestGatherLongFormEnduranceAttrib(t *testing.T) {
 	wg.Add(1)
 
 	sampleSmart.gatherDisk(acc, "", wg)
-	require.Equal(t, 7, acc.NFields(), "Wrong number of fields gathered")
+	require.Equal(t, 8, acc.NFields(), "Wrong number of fields gathered")
 	require.Equal(t, uint64(5), acc.NMetrics(), "Wrong number of metrics gathered")
 }
 
@@ -444,20 +556,74 @@ func Test_checkForNVMeDevices(t *testing.T) {
 	require.Equal(t, expectedNVMeDevices, resultNVMeDevices)
 }
 
-func Test_contains(t *testing.T) {
-	devices := []string{"/dev/sda", "/dev/nvme1"}
-	device := "/dev/nvme1"
-	deviceNotIncluded := "/dev/nvme5"
-	require.True(t, contains(devices, device))
-	require.False(t, contains(devices, deviceNotIncluded))
-}
-
 func Test_difference(t *testing.T) {
 	devices := []string{"/dev/sda", "/dev/nvme1", "/dev/nvme2"}
 	secondDevices := []string{"/dev/sda", "/dev/nvme1"}
 	expected := []string{"/dev/nvme2"}
 	result := difference(devices, secondDevices)
 	require.Equal(t, expected, result)
+}
+
+// mockExitError creates an exec.ExitError with the given exit status.
+// This uses the test binary itself to generate a real ExitError, avoiding platform-specific
+// shell commands.
+func mockExitError(exitStatus int) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable: %w", err)
+	}
+
+	cmd := exec.Command(exe, "-test.run=^$", fmt.Sprintf("-exit-status=%d", exitStatus))
+	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+	return cmd.Run()
+}
+
+func TestExitStatusForActiveVsStandbyDrives(t *testing.T) {
+	s := newSmart()
+	s.Attributes = true
+	s.PathSmartctl = "smartctl"
+	s.Nocheck = "standby"
+
+	runCmd = func(_ config.Duration, _ bool, _ string, args ...string) ([]byte, error) {
+		deviceArg := args[len(args)-1]
+
+		if deviceArg == "/dev/sdb" {
+			// Active drive - smartctl exits with 2 but drive shows as ACTIVE
+			return []byte(`Device Model: ST18000NT001-3NF101
+Power mode is: ACTIVE or IDLE
+SMART overall-health self-assessment test result: PASSED`), mockExitError(2)
+		} else if deviceArg == "/dev/sdc" {
+			// Standby drive - smartctl exits with 2 and drive shows as STANDBY
+			return []byte(mockStandbyData), mockExitError(2)
+		}
+		return nil, errors.New("unexpected device")
+	}
+
+	t.Run("Exit status should reflect drive state not command exit code", func(t *testing.T) {
+		s.Devices = []string{"/dev/sdb", "/dev/sdc"}
+		var acc testutil.Accumulator
+
+		err := s.Gather(&acc)
+		require.NoError(t, err)
+
+		deviceMetrics := acc.GetTelegrafMetrics()
+
+		for _, metric := range deviceMetrics {
+			if metric.Name() == "smart_device" {
+				device, _ := metric.GetTag("device")
+				exitStatus, ok := metric.GetField("exit_status")
+				require.True(t, ok, "exit_status field should exist")
+
+				if device == "sdb" {
+					// Active drive should have exit_status=0 regardless of command exit code
+					require.Equal(t, int64(0), exitStatus, "Active drive should have exit_status=0")
+				} else if device == "sdc" {
+					// Standby drive should have exit_status=2
+					require.Equal(t, int64(2), exitStatus, "Standby drive should have exit_status=2")
+				}
+			}
+		}
+	})
 }
 
 func Test_integerOverflow(t *testing.T) {
@@ -483,34 +649,34 @@ func Test_integerOverflow(t *testing.T) {
 
 var (
 	testOverflowAttributes = []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"smart_attribute",
 			map[string]string{
 				"device": "nvme0",
 				"name":   "Temperature_Sensor_3",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(9223372036854775807),
 			},
 			time.Unix(0, 0),
 		),
-		testutil.MustMetric(
+		metric.New(
 			"smart_attribute",
 			map[string]string{
 				"device": "nvme0",
 				"name":   "Temperature_Sensor_4",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(-9223372036854775808),
 			},
 			time.Unix(0, 0),
 		),
-		testutil.MustMetric(
+		metric.New(
 			"smart_device",
 			map[string]string{
 				"device": "nvme0",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"exit_status": 0,
 			},
 			time.Unix(0, 0),
@@ -518,7 +684,7 @@ var (
 	}
 
 	testHtsasAtributtes = []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"smart_attribute",
 			map[string]string{
 				"device":    ".",
@@ -528,12 +694,12 @@ var (
 				"model":     "HUC103030CSS600",
 				"name":      "Temperature_Celsius",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 36,
 			},
 			time.Unix(0, 0),
 		),
-		testutil.MustMetric(
+		metric.New(
 			"smart_attribute",
 			map[string]string{
 				"device":    ".",
@@ -543,12 +709,12 @@ var (
 				"model":     "HUC103030CSS600",
 				"name":      "Start_Stop_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 47,
 			},
 			time.Unix(0, 0),
 		),
-		testutil.MustMetric(
+		metric.New(
 			"smart_device",
 			map[string]string{
 				"device":    ".",
@@ -556,7 +722,7 @@ var (
 				"enabled":   "Enabled",
 				"model":     "HUC103030CSS600",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"exit_status": 0,
 				"health_ok":   true,
 				"temp_c":      36,
@@ -566,11 +732,11 @@ var (
 	}
 
 	testsAda0Attributes = []struct {
-		fields map[string]interface{}
+		fields map[string]any
 		tags   map[string]string
 	}{
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(200),
 				"worst":       int64(200),
 				"threshold":   int64(0),
@@ -591,7 +757,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(100),
 				"worst":       int64(100),
 				"threshold":   int64(0),
@@ -612,7 +778,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(99),
 				"worst":       int64(99),
 				"threshold":   int64(0),
@@ -633,7 +799,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(85),
 				"worst":       int64(85),
 				"threshold":   int64(0),
@@ -654,7 +820,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(253),
 				"worst":       int64(253),
 				"threshold":   int64(10),
@@ -675,7 +841,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(185),
 				"worst":       int64(185),
 				"threshold":   int64(100),
@@ -696,7 +862,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(55),
 				"worst":       int64(40),
 				"threshold":   int64(45),
@@ -717,7 +883,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(97),
 				"worst":       int64(97),
 				"threshold":   int64(0),
@@ -738,7 +904,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(66),
 				"worst":       int64(21),
 				"threshold":   int64(0),
@@ -759,7 +925,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(100),
 				"worst":       int64(100),
 				"threshold":   int64(0),
@@ -780,7 +946,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(200),
 				"worst":       int64(200),
 				"threshold":   int64(0),
@@ -801,7 +967,7 @@ var (
 			},
 		},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"value":       int64(100),
 				"worst":       int64(253),
 				"threshold":   int64(0),
@@ -827,7 +993,7 @@ var (
 	mockSerial = "CVFT5123456789ABCD"
 
 	testSmartctlDeviceTypeTag = []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"smart_device",
 			map[string]string{
 				"capacity":    "600000000000",
@@ -845,7 +1011,7 @@ var (
 			},
 			time.Unix(0, 0),
 		),
-		testutil.MustMetric(
+		metric.New(
 			"smart_device",
 			map[string]string{
 				"capacity":    "600000000000",
@@ -866,20 +1032,31 @@ var (
 	}
 
 	testSmartctlNVMeAttributes = []telegraf.Metric{
-		testutil.MustMetric("smart_device",
+		metric.New("smart_device",
 			map[string]string{
 				"device":    "nvme0",
 				"model":     "TS128GMTE850",
 				"serial_no": "D704940282?",
 			},
-			map[string]interface{}{
-				"exit_status": 0,
-				"health_ok":   true,
-				"temp_c":      38,
+			map[string]any{
+				"exit_status":               0,
+				"health_ok":                 true,
+				"temp_c":                    38,
+				"power_on_hours":            int64(6038),
+				"power_cycle_count":         int64(472),
+				"unsafe_shutdowns":          int64(355),
+				"available_spare":           int64(100),
+				"available_spare_threshold": int64(10),
+				"percentage_used":           int64(16),
+				"critical_warning":          int64(9),
+				"media_errors":              int64(0),
+				"error_log_entries":         int64(119699),
+				"warning_temperature_time":  int64(11),
+				"critical_temperature_time": int64(7),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "9",
@@ -887,12 +1064,12 @@ var (
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 6038,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "12",
@@ -900,60 +1077,60 @@ var (
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 472,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Media_and_Data_Integrity_Errors",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Error_Information_Log_Entries",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 119699,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Available_Spare",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 100,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Available_Spare_Threshold",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 10,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "194",
@@ -961,270 +1138,270 @@ var (
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 38,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Critical_Warning",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(9),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Percentage_Used",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(16),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Data_Units_Read",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(11836935),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Data_Units_Written",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(62288091),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Host_Read_Commands",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(135924188),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Host_Write_Commands",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(7715573429),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Controller_Busy_Time",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(4042),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Unsafe_Shutdowns",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(355),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Warning_Temperature_Time",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(11),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Critical_Temperature_Time",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(7),
 			},
 			time.Now(),
-		), testutil.MustMetric("smart_attribute",
+		), metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_1",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(57),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_2",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(50),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_3",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(44),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_4",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(43),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_5",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(57),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_6",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(50),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_7",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(44),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Temperature_Sensor_8",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(43),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Thermal_Management_T1_Trans_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Thermal_Management_T2_Trans_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Thermal_Management_T1_Total_Time",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "D704940282?",
 				"model":     "TS128GMTE850",
 				"name":      "Thermal_Management_T2_Total_Time",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
@@ -1232,20 +1409,31 @@ var (
 	}
 
 	testSmartctlNVMeWindowsAttributes = []telegraf.Metric{
-		testutil.MustMetric("smart_device",
+		metric.New("smart_device",
 			map[string]string{
 				"device":    "nvme0",
 				"model":     "Samsung SSD 970 EVO 1TB",
 				"serial_no": "xxx",
 			},
-			map[string]interface{}{
-				"exit_status": 0,
-				"health_ok":   true,
-				"temp_c":      47,
+			map[string]any{
+				"exit_status":               0,
+				"health_ok":                 true,
+				"temp_c":                    47,
+				"power_on_hours":            int64(1290),
+				"power_cycle_count":         int64(10779),
+				"unsafe_shutdowns":          int64(9),
+				"available_spare":           int64(100),
+				"available_spare_threshold": int64(10),
+				"percentage_used":           int64(0),
+				"critical_warning":          int64(0),
+				"media_errors":              int64(0),
+				"error_log_entries":         int64(979),
+				"warning_temperature_time":  int64(0),
+				"critical_temperature_time": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "9",
@@ -1253,24 +1441,24 @@ var (
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 1290,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 				"name":      "Unsafe_Shutdowns",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 9,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "12",
@@ -1278,60 +1466,60 @@ var (
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 10779,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Media_and_Data_Integrity_Errors",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Error_Information_Log_Entries",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 979,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Available_Spare",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 100,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Available_Spare_Threshold",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 10,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"id":        "194",
@@ -1339,139 +1527,139 @@ var (
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 47,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Critical_Warning",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Percentage_Used",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Data_Units_Read",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(16626888),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Data_Units_Written",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(16829004),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Host_Read_Commands",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(205868508),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Host_Write_Commands",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(228472943),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Controller_Busy_Time",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(686),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"name":      "Critical_Temperature_Time",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 				"name":      "Temperature_Sensor_1",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(47),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 				"name":      "Temperature_Sensor_2",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(68),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": "xxx",
 				"model":     "Samsung SSD 970 EVO 1TB",
 				"name":      "Warning_Temperature_Time",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
@@ -1479,11 +1667,11 @@ var (
 	}
 
 	testsAda0Device = []struct {
-		fields map[string]interface{}
+		fields map[string]any
 		tags   map[string]string
 	}{
 		{
-			map[string]interface{}{
+			map[string]any{
 				"exit_status":               int(0),
 				"health_ok":                 bool(true),
 				"read_error_rate":           int64(0),
@@ -1506,15 +1694,60 @@ var (
 		},
 	}
 
-	testNVMeDevice = []struct {
-		fields map[string]interface{}
+	testsSeagateSATADevice = []struct {
+		fields map[string]any
 		tags   map[string]string
 	}{
 		{
-			map[string]interface{}{
-				"exit_status": int(0),
-				"temp_c":      int64(38),
-				"health_ok":   true,
+			map[string]any{
+				"command_timeout":            int64(0),
+				"end_to_end_error":           int64(0),
+				"exit_status":                int(0),
+				"health_ok":                  bool(true),
+				"pending_sector_count":       int64(0),
+				"power_cycle_count":          int64(2202),
+				"power_on_hours":             int64(28379),
+				"read_error_rate":            float64(0.00020959964875192315),
+				"reallocated_sectors_count":  int64(0),
+				"seek_error_rate":            float64(0.0015386461875674382),
+				"spin_retry_count":           int64(0),
+				"temp_c":                     int64(33),
+				"udma_crc_errors":            int64(0),
+				"uncorrectable_errors":       int64(8),
+				"uncorrectable_sector_count": int64(0),
+			},
+			map[string]string{
+				"capacity":  "2000398934016",
+				"device":    ".",
+				"enabled":   "Enabled",
+				"model":     "ST2000DM006-2DM164",
+				"power":     "ACTIVE",
+				"serial_no": "XXXXXXXX",
+				"wwn":       "XXXXXXXX",
+			},
+		},
+	}
+
+	testNVMeDevice = []struct {
+		fields map[string]any
+		tags   map[string]string
+	}{
+		{
+			map[string]any{
+				"exit_status":               int(0),
+				"temp_c":                    int64(38),
+				"health_ok":                 true,
+				"power_on_hours":            int64(6038),
+				"power_cycle_count":         int64(472),
+				"unsafe_shutdowns":          int64(355),
+				"available_spare":           int64(100),
+				"available_spare_threshold": int64(10),
+				"percentage_used":           int64(16),
+				"critical_warning":          int64(9),
+				"media_errors":              int64(0),
+				"error_log_entries":         int64(119699),
+				"warning_temperature_time":  int64(11),
+				"critical_temperature_time": int64(7),
 			},
 			map[string]string{
 				"device":    "nvme0",
@@ -1525,194 +1758,194 @@ var (
 	}
 
 	testIntelNVMeAttributes = []telegraf.Metric{
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Program_Fail_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Erase_Fail_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "End_To_End_Error_Detection_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Crc_Error_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 13,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Retry_Buffer_Overflow_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Wear_Leveling_Min",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 39,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Wear_Leveling_Max",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 40,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Wear_Leveling_Avg",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 39,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Timed_Workload_Media_Wear",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": float64(0.13),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Timed_Workload_Host_Reads",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": float64(71),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Timed_Workload_Timer",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(1612952),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Thermal_Throttle_Status_Prc",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": float64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Thermal_Throttle_Status_Cnt",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Pll_Lock_Loss_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Nand_Bytes_Written",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Host_Bytes_Written",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(0),
 			},
 			time.Now(),
@@ -1720,134 +1953,134 @@ var (
 	}
 
 	testIntelNVMeNewFormatAttributes = []telegraf.Metric{
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Program_Fail_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Erase_Fail_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Wear_Leveling_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(700090417315),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "End_To_End_Error_Detection_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Crc_Error_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 13,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Media_Wear_Percentage",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 552,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Host_Reads",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 73,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Timed_Workload_Timer",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": int64(2343038),
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Thermal_Throttle_Status",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Retry_Buffer_Overflow_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
 		),
-		testutil.MustMetric("smart_attribute",
+		metric.New("smart_attribute",
 			map[string]string{
 				"device":    "nvme0",
 				"serial_no": mockSerial,
 				"model":     mockModel,
 				"name":      "Pll_Lock_Loss_Count",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"raw_value": 0,
 			},
 			time.Now(),
@@ -2133,6 +2366,66 @@ ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
                             |||____ S speed/performance
                             ||_____ O updated online
                             |______ P prefailure warning
+`
+
+	seagateSATAInfoData75 = `smartctl 7.5 2025-04-30 r5714 [x86_64-linux-6.16.4-arch1-1] (local build)
+Copyright (C) 2002-25, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Seagate BarraCuda 3.5 (CMR)
+Device Model:     ST2000DM006-2DM164
+Serial Number:    XXXXXXXX
+LU WWN Device Id: XXXXXXXX
+Firmware Version: XXXXXXXX
+User Capacity:    2,000,398,934,016 bytes [2.00 TB]
+Sector Sizes:     512 bytes logical, 4096 bytes physical
+Rotation Rate:    7200 rpm
+Form Factor:      3.5 inches
+Device is:        In smartctl database
+ATA Version is:   ACS-2, ACS-3 T13/2161-D revision 3b
+SATA Version is:  SATA 3.1, 6.0 Gb/s (current: 6.0 Gb/s)
+Local Time is:    Sun Aug 31 13:47:37 2025 IST
+SMART support is: Available - device has SMART capability.
+SMART support is: Enabled
+Power mode is:    ACTIVE or IDLE
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART Attributes Data Structure revision number: 10
+Vendor Specific SMART Attributes with Thresholds:
+ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
+  1 Raw_Read_Error_Rate     POSR--   107   099   006    -    2765/13191816
+  3 Spin_Up_Time            PO----   096   095   000    -    0
+  4 Start_Stop_Count        -O--CK   098   098   020    -    2195
+  5 Reallocated_Sector_Ct   PO--CK   100   100   010    -    0
+  7 Seek_Error_Rate         POSR--   074   060   030    -    38895/25278716
+  9 Power_On_Hours          -O--CK   068   068   000    -    28379
+ 10 Spin_Retry_Count        PO--C-   100   100   097    -    0
+ 12 Power_Cycle_Count       -O--CK   098   098   020    -    2202
+183 Runtime_Bad_Block       -O--CK   100   100   000    -    0
+184 End-to-End_Error        -O--CK   100   100   099    -    0
+187 Reported_Uncorrect      -O--CK   092   092   000    -    8
+188 Command_Timeout         -O--CK   100   099   000    -    0 0 1
+189 High_Fly_Writes         -O-RCK   097   097   000    -    3
+190 Airflow_Temperature_Cel -O---K   067   057   045    -    33 (Min/Max 24/34)
+191 G-Sense_Error_Rate      -O--CK   100   100   000    -    0
+192 Power-Off_Retract_Count -O--CK   100   100   000    -    130
+193 Load_Cycle_Count        -O--CK   001   001   000    -    837543
+194 Temperature_Celsius     -O---K   033   043   000    -    33 (0 20 0 0 0)
+197 Current_Pending_Sector  -O--C-   100   100   000    -    0
+198 Offline_Uncorrectable   ----C-   100   100   000    -    0
+199 UDMA_CRC_Error_Count    -OSRCK   200   200   000    -    0
+240 Head_Flying_Hours       ------   100   253   000    -    25597h+17m+05.460s
+241 Total_LBAs_Written      ------   100   253   000    -    69019629695
+242 Total_LBAs_Read         ------   100   253   000    -    11937226159010
+                            ||||||_ K auto-keep
+                            |||||__ C event count
+                            ||||___ R error rate
+                            |||____ S speed/performance
+                            ||_____ O updated online
+                            |______ P prefailure warning
+
 `
 
 	ssdInfoData = `smartctl 6.6 2016-05-31 r4324 [x86_64-linux-4.15.0-33-generic] (local build)
@@ -2621,4 +2914,85 @@ msdbd   : 0
 ps    0 : mp:25.00W operational enlat:0 exlat:0 rrt:0 rrl:0
           rwt:0 rwl:0 idle_power:- active_power:-
 `
+	// Mock data for standby drive
+	seagateSMRSATAInfoData75 = `smartctl 7.5 2025-04-30 r5714 [x86_64-linux-6.18.12-gentoo] (local build)
+Copyright (C) 2002-25, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Seagate BarraCuda 3.5 (SMR)
+Device Model:     ST2000DM008-2UB102
+Firmware Version: 0001
+User Capacity:    2,000,398,934,016 bytes [2.00 TB]
+Sector Sizes:     512 bytes logical, 4096 bytes physical
+Rotation Rate:    7200 rpm
+Form Factor:      3.5 inches
+TRIM Command:     Available
+Device is:        In smartctl database 7.5/6204
+ATA Version is:   ACS-3 T13/2161-D revision 5
+SATA Version is:  SATA 3.1, 6.0 Gb/s (current: 6.0 Gb/s)
+Local Time is:    Wed Aug 26 12:14:48 2026 EDT
+SMART support is: Available - device has SMART capability.
+SMART support is: Enabled
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART Attributes Data Structure revision number: 10
+Vendor Specific SMART Attributes with Thresholds:
+ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
+  1 Raw_Read_Error_Rate     POSR--   080   066   006    -    0/96644691
+  3 Spin_Up_Time            PO----   099   099   000    -    0
+  4 Start_Stop_Count        -O--CK   100   100   020    -    3
+  5 Reallocated_Sector_Ct   PO--CK   100   100   010    -    0
+  7 Seek_Error_Rate         POSR--   100   253   045    -    0/320294
+  9 Power_On_Hours          -O--CK   100   100   000    -    182h+39m+24.879s
+ 10 Spin_Retry_Count        PO--C-   100   100   097    -    0
+ 12 Power_Cycle_Count       -O--CK   100   100   020    -    3
+183 Runtime_Bad_Block       -O--CK   100   100   000    -    0
+184 End-to-End_Error        -O--CK   100   100   099    -    0
+187 Reported_Uncorrect      -O--CK   100   100   000    -    0
+188 Command_Timeout         -O--CK   100   100   000    -    0 0 0
+189 High_Fly_Writes         -O-RCK   100   100   000    -    0
+190 Airflow_Temperature_Cel -O---K   065   063   040    -    35 (Min/Max 34/37)
+191 G-Sense_Error_Rate      -O--CK   100   100   000    -    0
+192 Power-Off_Retract_Count -O--CK   100   100   000    -    6
+193 Load_Cycle_Count        -O--CK   100   100   000    -    27
+194 Temperature_Celsius     -O---K   035   040   000    -    35 (0 28 0 0 0)
+195 ECC_On_the_Fly_Count    -O-RC-   080   066   000    -    0/96644691
+197 Current_Pending_Sector  -O--C-   100   100   000    -    0
+198 Offline_Uncorrectable   ----C-   100   100   000    -    0
+199 UDMA_CRC_Error_Count    -OSRCK   200   200   000    -    0
+240 Head_Flying_Hours       ------   100   253   000    -    180h+48m+22.033s
+241 Total_LBAs_Written      ------   100   253   000    -    96526512
+242 Total_LBAs_Read         ------   100   253   000    -    118179
+                            ||||||_ K auto-keep
+                            |||||__ C event count
+                            ||||___ R error rate
+                            |||____ S speed/performance
+                            ||_____ O updated online
+                            |______ P prefailure warning
+`
+
+	mockStandbyData = `smartctl 7.4 2023-08-01 r5530 [x86_64-linux-6.12.24-Unraid] (local build)
+Copyright (C) 2002-23, Bruce Allen, Christian Franke, www.smartmontools.org
+
+Device is in STANDBY mode, exit(2)
+`
 )
+
+// TestMain handles the test helper process for mockExitError.
+// This allows us to generate proper exec.ExitError instances with specific exit codes
+// using the test binary itself, which works cross-platform (unlike shell-specific commands).
+func TestMain(m *testing.M) {
+	var exitStatusFlag int
+	flag.IntVar(&exitStatusFlag, "exit-status", 0, "exit status for test helper")
+	flag.Parse()
+
+	// If this is being run as a helper process, exit with the requested status
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		os.Exit(exitStatusFlag)
+	}
+
+	// Otherwise, run the tests normally
+	os.Exit(m.Run())
+}

@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -40,6 +41,11 @@ type Chrony struct {
 	client *fbchrony.Client
 	source string
 	local  string
+
+	// clientMu protects concurrent access to the chrony client.
+	// This prevents race conditions when multiple Gather() calls
+	// access the same client instance concurrently.
+	sync.Mutex
 }
 
 func (*Chrony) SampleConfig() string {
@@ -139,13 +145,20 @@ func (c *Chrony) Start(_ telegraf.Accumulator) error {
 	}
 	c.Log.Debugf("Connected to %q...", c.Server)
 
-	// Initialize the client
-	c.client = &fbchrony.Client{Connection: c.conn}
+	// Initialize the client, bounding each request by the configured timeout so
+	// a lost response cannot block collection indefinitely (see issue #16495).
+	c.client = &fbchrony.Client{Connection: &deadlineConn{Conn: c.conn, timeout: time.Duration(c.Timeout)}}
 
 	return nil
 }
 
 func (c *Chrony) Gather(acc telegraf.Accumulator) error {
+	// Protect concurrent access to the chrony client to prevent race conditions
+	// when multiple Gather() calls occur simultaneously (e.g., when a previous
+	// gather hasn't completed before the next interval triggers).
+	c.Lock()
+	defer c.Unlock()
+
 	for _, m := range c.Metrics {
 		switch m {
 		case "activity":
@@ -232,7 +245,7 @@ func (c *Chrony) gatherActivity(acc telegraf.Accumulator) error {
 		tags["source"] = c.source
 	}
 
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"online":        resp.Online,
 		"offline":       resp.Offline,
 		"burst_online":  resp.BurstOnline,
@@ -277,7 +290,7 @@ func (c *Chrony) gatherTracking(acc telegraf.Accumulator) error {
 		tags["source"] = c.source
 	}
 
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"frequency":       resp.FreqPPM,
 		"system_time":     resp.CurrentCorrection,
 		"last_offset":     resp.LastOffset,
@@ -305,10 +318,10 @@ func (c *Chrony) gatherServerStats(acc telegraf.Accumulator) error {
 		tags["source"] = c.source
 	}
 
-	var fields map[string]interface{}
+	var fields map[string]any
 	switch resp := r.(type) {
 	case *fbchrony.ReplyServerStats:
-		fields = map[string]interface{}{
+		fields = map[string]any{
 			"ntp_hits":  resp.NTPHits,
 			"ntp_drops": resp.NTPDrops,
 			"cmd_hits":  resp.CMDHits,
@@ -316,7 +329,7 @@ func (c *Chrony) gatherServerStats(acc telegraf.Accumulator) error {
 			"log_drops": resp.LogDrops,
 		}
 	case *fbchrony.ReplyServerStats2:
-		fields = map[string]interface{}{
+		fields = map[string]any{
 			"ntp_hits":      resp.NTPHits,
 			"ntp_drops":     resp.NTPDrops,
 			"ntp_auth_hits": resp.NTPAuthHits,
@@ -327,7 +340,7 @@ func (c *Chrony) gatherServerStats(acc telegraf.Accumulator) error {
 			"nke_drops":     resp.NKEDrops,
 		}
 	case *fbchrony.ReplyServerStats3:
-		fields = map[string]interface{}{
+		fields = map[string]any{
 			"ntp_hits":             resp.NTPHits,
 			"ntp_drops":            resp.NTPDrops,
 			"ntp_auth_hits":        resp.NTPAuthHits,
@@ -341,7 +354,7 @@ func (c *Chrony) gatherServerStats(acc telegraf.Accumulator) error {
 			"nke_drops":            resp.NKEDrops,
 		}
 	case *fbchrony.ReplyServerStats4:
-		fields = map[string]interface{}{
+		fields = map[string]any{
 			"ntp_hits":                   resp.NTPHits,
 			"ntp_drops":                  resp.NTPDrops,
 			"ntp_auth_hits":              resp.NTPAuthHits,
@@ -381,10 +394,10 @@ func (c *Chrony) getSourceName(ip net.IP) (string, error) {
 	}
 
 	// Cut the string at null termination
-	if termidx := bytes.Index(sourceName.Name[:], []byte{0}); termidx >= 0 {
-		return string(sourceName.Name[:termidx]), nil
+	if termidx := bytes.Index([]byte(sourceName.Name), []byte{0}); termidx >= 0 {
+		return sourceName.Name[:termidx], nil
 	}
-	return string(sourceName.Name[:]), nil
+	return sourceName.Name, nil
 }
 
 func (c *Chrony) gatherSources(acc telegraf.Accumulator) error {
@@ -438,7 +451,7 @@ func (c *Chrony) gatherSources(acc telegraf.Accumulator) error {
 			tags["source"] = c.source
 		}
 
-		fields := map[string]interface{}{
+		fields := map[string]any{
 			"index":                    idx,
 			"ip":                       sourceData.IPAddr.String(),
 			"poll":                     sourceData.Poll,
@@ -507,7 +520,7 @@ func (c *Chrony) gatherSourceStats(acc telegraf.Accumulator) error {
 			tags["source"] = c.source
 		}
 
-		fields := map[string]interface{}{
+		fields := map[string]any{
 			"index":              idx,
 			"ip":                 sourceStats.IPAddr.String(),
 			"samples":            sourceStats.NSamples,
@@ -522,6 +535,24 @@ func (c *Chrony) gatherSourceStats(acc telegraf.Accumulator) error {
 		acc.AddFields("chrony_sourcestats", fields, tags)
 	}
 	return nil
+}
+
+// deadlineConn applies a read deadline before each read so a query to chronyd
+// cannot block forever if the response is lost, e.g. during a network
+// interruption to a remote server. Without it the plugin waits for the reply
+// indefinitely and never collects again until restarted (see issue #16495).
+type deadlineConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *deadlineConn) Read(b []byte) (int, error) {
+	if c.timeout > 0 {
+		if err := c.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(b)
 }
 
 func init() {

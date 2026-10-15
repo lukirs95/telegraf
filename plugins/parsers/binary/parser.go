@@ -16,34 +16,22 @@ import (
 
 type Parser struct {
 	AllowNoMatch bool            `toml:"allow_no_match"`
-	Endianess    string          `toml:"endianess" deprecated:"1.27.4;1.35.0;use 'endianness' instead"`
 	Endianness   string          `toml:"endianness"`
 	Configs      []Config        `toml:"binary"`
-	HexEncoding  bool            `toml:"hex_encoding" deprecated:"1.30.0;1.35.0;use 'binary_encoding' instead"`
 	Encoding     string          `toml:"binary_encoding"`
 	Log          telegraf.Logger `toml:"-"`
 
 	metricName  string
 	defaultTags map[string]string
 	converter   binary.ByteOrder
+	timeFunc    func() time.Time
 }
 
 func (p *Parser) Init() error {
-	// Keep backward compatibility
-	if p.Endianess != "" && p.Endianness == "" {
-		p.Endianness = p.Endianess
-	}
-	if p.HexEncoding {
-		if p.Encoding != "" && p.Encoding != "hex" {
-			return errors.New("conflicting settings between 'hex_encoding' and 'binary_encoding'")
-		}
-		p.Encoding = "hex"
-	}
-
 	switch p.Endianness {
-	case "le":
+	case "little", "le":
 		p.converter = binary.LittleEndian
-	case "be":
+	case "big", "be":
 		p.converter = binary.BigEndian
 	case "", "host":
 		p.converter = internal.HostEndianness
@@ -68,11 +56,19 @@ func (p *Parser) Init() error {
 		p.Configs[i] = cfg
 	}
 
+	if p.timeFunc == nil {
+		p.timeFunc = time.Now
+	}
+
 	return nil
 }
 
+func (p *Parser) SetTimeFunc(fn func() time.Time) {
+	p.timeFunc = fn
+}
+
 func (p *Parser) Parse(data []byte) ([]telegraf.Metric, error) {
-	t := time.Now()
+	t := p.timeFunc()
 
 	// If the data is encoded in HEX, we need to decode it first
 	buf := data
@@ -98,7 +94,7 @@ func (p *Parser) Parse(data []byte) ([]telegraf.Metric, error) {
 	}
 
 	matches := 0
-	metrics := make([]telegraf.Metric, 0)
+	metrics := make([]telegraf.Metric, 0, len(p.Configs))
 	for i, cfg := range p.Configs {
 		// Apply the filter and see if we should match this
 		if !cfg.matches(buf) {
@@ -164,7 +160,7 @@ func extractPart(in []byte, offset, bits uint64) ([]byte, error) {
 		return nil, fmt.Errorf("out-of-bounds @%d with %d bits", offset, bits)
 	}
 
-	var out []byte
+	out := make([]byte, 0, length)
 	out = append(out, in[start:start+length]...)
 
 	if offset%8 != 0 {

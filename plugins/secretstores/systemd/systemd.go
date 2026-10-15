@@ -101,10 +101,6 @@ func (s *Systemd) List() ([]string, error) {
 	return secrets, nil
 }
 
-func (*Systemd) Set(_, _ string) error {
-	return errors.New("secret-store does not support creating secrets")
-}
-
 func (s *Systemd) GetResolver(key string) (telegraf.ResolveFunc, error) {
 	resolver := func() ([]byte, bool, error) {
 		s, err := s.Get(key)
@@ -126,7 +122,9 @@ func getSystemdMajorVersion() (int, error) {
 		return 0, err
 	}
 	fullVersion = strings.Trim(fullVersion, "\"")
-	return strconv.Atoi(strings.SplitN(fullVersion, ".", 2)[0])
+	major, _, _ := strings.Cut(fullVersion, ".")
+	major, _, _ = strings.Cut(major, "-")
+	return strconv.Atoi(major)
 }
 
 func init() {

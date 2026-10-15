@@ -1,7 +1,8 @@
 # Datadog Output Plugin
 
 This plugin writes metrics to the [Datadog Metrics API][metrics] and requires an
-`apikey` which can be obtained [here][apikey] for the account.
+`apikey` which can be obtained on the [website][apikey] for the account.
+
 > [!NOTE]
 > This plugin supports the v1 API.
 
@@ -9,12 +10,14 @@ This plugin writes metrics to the [Datadog Metrics API][metrics] and requires an
 🏷️ applications, cloud, datastore
 💻 all
 
+[metrics]: https://docs.datadoghq.com/api/v1/metrics/#submit-metrics
+[apikey]: https://app.datadoghq.com/account/settings#api
+
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -44,7 +47,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
   ## When non-zero, converts count metrics submitted by inputs.statsd
   ## into rate, while dividing the metric value by this number.
-  ## Note that in order for metrics to be submitted simultaenously alongside
+  ## Note that in order for metrics to be submitted simultaneously alongside
   ## a Datadog agent, rate_interval has to match the interval used by the
   ## agent - which defaults to 10s
   # rate_interval = 0s
@@ -65,6 +68,3 @@ intervals are the same (Datadog defaults to `10s`).
 Note that this only supports metrics ingested via `inputs.statsd` given
 the dependency on the `metric_type` tag it creates. There is only support for
 `counter` metrics, and `count` values from `timing` and `histogram` metrics.
-
-[metrics]: https://docs.datadoghq.com/api/v1/metrics/#submit-metrics
-[apikey]: https://app.datadoghq.com/account/settings#api

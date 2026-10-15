@@ -30,7 +30,6 @@ const (
 	cpuC3StateResidency
 	cpuC6StateResidency
 	cpuC7StateResidency
-	cpuBusyCycles // alias of cpuC0StateResidency
 	cpuBusyFrequency
 
 	// metrics relying on perf
@@ -58,8 +57,6 @@ func (m cpuMetricType) String() string {
 		return "cpu_c6_state_residency"
 	case cpuC7StateResidency:
 		return "cpu_c7_state_residency"
-	case cpuBusyCycles:
-		return "cpu_busy_cycles"
 	case cpuC0SubstateC01Percent:
 		return "cpu_c0_substate_c01"
 	case cpuC0SubstateC02Percent:
@@ -98,8 +95,6 @@ func cpuMetricTypeFromString(metric string) (cpuMetricType, error) {
 		return cpuC6StateResidency, nil
 	case "cpu_c7_state_residency":
 		return cpuC7StateResidency, nil
-	case "cpu_busy_cycles":
-		return cpuBusyCycles, nil
 	case "cpu_c0_substate_c01":
 		return cpuC0SubstateC01Percent, nil
 	case "cpu_c0_substate_c02":
@@ -190,7 +185,7 @@ type metricInfoProvider interface {
 	measurement() string
 
 	// fields returns a map of string keys with metric name and metric values.
-	fields() (map[string]interface{}, error)
+	fields() (map[string]any, error)
 
 	// tags returns a map of string key and string value to add additional metric-specific information.
 	tags() map[string]string
@@ -229,7 +224,7 @@ func addMetric(acc telegraf.Accumulator, m metricInfoProvider, logOnceMap map[st
 
 // metricCommon has metric information common to different types.
 type metricCommon struct {
-	metric interface{}
+	metric any
 	units  string
 }
 
@@ -266,13 +261,13 @@ type cpuMetric[T numeric] struct {
 	fetchFn   func(cpuID int) (T, error)
 }
 
-func (m *cpuMetric[T]) fields() (map[string]interface{}, error) {
+func (m *cpuMetric[T]) fields() (map[string]any, error) {
 	val, err := m.fetchFn(m.cpuID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %q for CPU ID %v: %w", m.metric, m.cpuID, err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		fmt.Sprintf("%s_%s", m.metric, m.units): round(val),
 	}, nil
 }
@@ -294,13 +289,13 @@ type packageMetric[T numeric] struct {
 	fetchFn   func(packageID int) (T, error)
 }
 
-func (m *packageMetric[T]) fields() (map[string]interface{}, error) {
+func (m *packageMetric[T]) fields() (map[string]any, error) {
 	val, err := m.fetchFn(m.packageID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %q for package ID %v: %w", m.metric, m.packageID, err)
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		fmt.Sprintf("%s_%s", m.metric, m.units): round(val),
 	}, nil
 }

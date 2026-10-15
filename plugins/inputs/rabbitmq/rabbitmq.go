@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -50,6 +51,8 @@ type RabbitMQ struct {
 	QueueExclude              []string `toml:"queue_name_exclude"`
 	FederationUpstreamInclude []string `toml:"federation_upstream_include"`
 	FederationUpstreamExclude []string `toml:"federation_upstream_exclude"`
+
+	IncludeQueueTypeTag bool `toml:"include_queue_type_tag"`
 
 	Log telegraf.Logger `toml:"-"`
 
@@ -122,6 +125,7 @@ type queue struct {
 	Name                   string
 	Node                   string
 	Vhost                  string
+	Type                   string
 	Durable                bool
 	AutoDelete             bool     `json:"auto_delete"`
 	IdleSince              string   `json:"idle_since"`
@@ -211,26 +215,26 @@ type memoryResponse struct {
 
 // memory details
 type memory struct {
-	ConnectionReaders   int64       `json:"connection_readers"`
-	ConnectionWriters   int64       `json:"connection_writers"`
-	ConnectionChannels  int64       `json:"connection_channels"`
-	ConnectionOther     int64       `json:"connection_other"`
-	QueueProcs          int64       `json:"queue_procs"`
-	QueueSlaveProcs     int64       `json:"queue_slave_procs"`
-	Plugins             int64       `json:"plugins"`
-	OtherProc           int64       `json:"other_proc"`
-	Metrics             int64       `json:"metrics"`
-	MgmtDB              int64       `json:"mgmt_db"`
-	Mnesia              int64       `json:"mnesia"`
-	OtherEts            int64       `json:"other_ets"`
-	Binary              int64       `json:"binary"`
-	MsgIndex            int64       `json:"msg_index"`
-	Code                int64       `json:"code"`
-	Atom                int64       `json:"atom"`
-	OtherSystem         int64       `json:"other_system"`
-	AllocatedUnused     int64       `json:"allocated_unused"`
-	ReservedUnallocated int64       `json:"reserved_unallocated"`
-	Total               interface{} `json:"total"`
+	ConnectionReaders   int64 `json:"connection_readers"`
+	ConnectionWriters   int64 `json:"connection_writers"`
+	ConnectionChannels  int64 `json:"connection_channels"`
+	ConnectionOther     int64 `json:"connection_other"`
+	QueueProcs          int64 `json:"queue_procs"`
+	QueueSlaveProcs     int64 `json:"queue_slave_procs"`
+	Plugins             int64 `json:"plugins"`
+	OtherProc           int64 `json:"other_proc"`
+	Metrics             int64 `json:"metrics"`
+	MgmtDB              int64 `json:"mgmt_db"`
+	Mnesia              int64 `json:"mnesia"`
+	OtherEts            int64 `json:"other_ets"`
+	Binary              int64 `json:"binary"`
+	MsgIndex            int64 `json:"msg_index"`
+	Code                int64 `json:"code"`
+	Atom                int64 `json:"atom"`
+	OtherSystem         int64 `json:"other_system"`
+	AllocatedUnused     int64 `json:"allocated_unused"`
+	ReservedUnallocated int64 `json:"reserved_unallocated"`
+	Total               any   `json:"total"`
 }
 
 type errorResponse struct {
@@ -357,14 +361,13 @@ func (r *RabbitMQ) requestEndpoint(u string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (r *RabbitMQ) requestJSON(u string, target interface{}) error {
+func (r *RabbitMQ) requestJSON(u string, target any) error {
 	buf, err := r.requestEndpoint(u)
 	if err != nil {
 		return err
 	}
 	if err := json.Unmarshal(buf, target); err != nil {
-		var jsonErr *json.UnmarshalTypeError
-		if errors.As(err, &jsonErr) {
+		if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 			// Try to get the error reason from the response
 			var errResponse errorResponse
 			if json.Unmarshal(buf, &errResponse) == nil && errResponse.Error != "" {
@@ -403,7 +406,7 @@ func gatherOverview(r *RabbitMQ, acc telegraf.Accumulator) {
 	}
 
 	tags := map[string]string{"url": r.URL}
-	fields := map[string]interface{}{
+	fields := map[string]any{
 		"messages":               overview.QueueTotals.Messages,
 		"messages_ready":         overview.QueueTotals.MessagesReady,
 		"messages_unacked":       overview.QueueTotals.MessagesUnacknowledged,
@@ -449,7 +452,7 @@ func gatherNodes(r *RabbitMQ, acc telegraf.Accumulator) {
 			tags := map[string]string{"url": r.URL}
 			tags["node"] = singleNode.Name
 
-			fields := map[string]interface{}{
+			fields := map[string]any{
 				"disk_free":                 singleNode.DiskFree,
 				"disk_free_limit":           singleNode.DiskFreeLimit,
 				"disk_free_alarm":           boolToInt(singleNode.DiskFreeAlarm),
@@ -513,7 +516,7 @@ func gatherNodes(r *RabbitMQ, acc telegraf.Accumulator) {
 				switch v := memory.Memory.Total.(type) {
 				case float64:
 					fields["mem_total"] = int64(v)
-				case map[string]interface{}:
+				case map[string]any:
 					var foundEstimator bool
 					for _, estimator := range []string{"rss", "allocated", "erlang"} {
 						if x, found := v[estimator]; found {
@@ -556,6 +559,7 @@ func gatherQueues(r *RabbitMQ, acc telegraf.Accumulator) {
 		if !r.queueFilter.Match(queue.Name) {
 			continue
 		}
+
 		tags := map[string]string{
 			"url":         r.URL,
 			"queue":       queue.Name,
@@ -565,7 +569,15 @@ func gatherQueues(r *RabbitMQ, acc telegraf.Accumulator) {
 			"auto_delete": strconv.FormatBool(queue.AutoDelete),
 		}
 
-		fields := map[string]interface{}{
+		if r.IncludeQueueTypeTag {
+			if queue.Type == "" {
+				tags["type"] = "classic"
+			} else {
+				tags["type"] = queue.Type
+			}
+		}
+
+		fields := map[string]any{
 			// common information
 			"consumers":                queue.Consumers,
 			"consumer_utilisation":     queue.ConsumerUtilisation,
@@ -631,7 +643,7 @@ func gatherExchanges(r *RabbitMQ, acc telegraf.Accumulator) {
 
 		acc.AddFields(
 			"rabbitmq_exchange",
-			map[string]interface{}{
+			map[string]any{
 				"messages_publish_in":       exchange.messageStats.PublishIn,
 				"messages_publish_in_rate":  exchange.messageStats.PublishInDetails.Rate,
 				"messages_publish_out":      exchange.messageStats.PublishOut,
@@ -673,7 +685,7 @@ func gatherFederationLinks(r *RabbitMQ, acc telegraf.Accumulator) {
 
 		acc.AddFields(
 			"rabbitmq_federation",
-			map[string]interface{}{
+			map[string]any{
 				"acks_uncommitted":           link.LocalChannel.AcksUncommitted,
 				"consumers":                  link.LocalChannel.ConsumerCount,
 				"messages_unacknowledged":    link.LocalChannel.MessagesUnacknowledged,
@@ -693,13 +705,7 @@ func (r *RabbitMQ) shouldGatherNode(node *node) bool {
 		return true
 	}
 
-	for _, name := range r.Nodes {
-		if name == node.Name {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(r.Nodes, node.Name)
 }
 
 func (r *RabbitMQ) createQueueFilter() error {
@@ -733,13 +739,7 @@ func (r *RabbitMQ) shouldGatherExchange(exchangeName string) bool {
 		return true
 	}
 
-	for _, name := range r.Exchanges {
-		if name == exchangeName {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(r.Exchanges, exchangeName)
 }
 
 func (r *RabbitMQ) shouldGatherFederationLink(link federationLink) bool {

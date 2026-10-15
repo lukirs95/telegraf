@@ -11,10 +11,9 @@ This plugin produces metrics from the collected
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -285,21 +284,6 @@ Set it to `0s` to disable periodic refreshing.
 Example:
 `CountersRefreshInterval=1m`
 
-##### PreVistaSupport
-
-(Deprecated in 1.7; Necessary features on Windows Vista and newer are checked
-dynamically)
-
-Bool, if set to `true`, the plugin will use the localized PerfCounter interface
-that has been present since before Vista for backwards compatibility.
-
-It is recommended NOT to use this on OSes starting with Vista and newer because
-it requires more configuration to use this than the newer interface present
-since Vista.
-
-Example for Windows Server 2003, this would be set to true:
-`PreVistaSupport=true`
-
 ##### UsePerfCounterTime
 
 Bool, if set to `true` will request a timestamp along with the PerfCounter data.
@@ -392,8 +376,9 @@ is set to `true`.
 
 ##### Sources (Object) (Optional)
 
-Overrides the [Sources](#sources-optional) global parameter for current performance
-object. See [Sources](#sources-optional) description for more details.
+Overrides the [Sources](#sources-optional) global parameter for current
+performance object. See [Sources](#sources-optional) description for more
+details.
 
 ##### Measurement (Optional)
 
@@ -414,7 +399,7 @@ as seen in the Windows Performance Monitor.
 A field representing raw counter value has the `_Raw` suffix. Raw values should
 be further used in a calculation,
 e.g. `100-(non_negative_derivative("Percent_Processor_Time_Raw",1s)/100000`
-Note: Time based counters (i.e. *% Processor Time*) are reported in hundredths
+Note: Time based counters (for example, *% Processor Time*) are reported in hundredths
 of nanoseconds.
 This key is optional. It is a simple bool.
 If set to `true`, counter values will be provided in the raw, integer, form.
@@ -423,7 +408,7 @@ formatted, displayable, form as seen in the Windows Performance Monitor.
 A field representing raw counter value has the `_Raw` suffix.
 Raw values should be further used in a calculation,
 e.g. `100-(non_negative_derivative("Percent_Processor_Time_Raw",1s)/100000`
-Note: Time based counters (i.e. `% Processor Time`)
+Note: Time based counters (for example, `% Processor Time`)
 are reported in hundredths of nanoseconds.
 
 Example: `UseRawValues = true`

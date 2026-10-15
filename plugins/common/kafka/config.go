@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -32,6 +33,13 @@ type WriteConfig struct {
 	MaxRetry         int  `toml:"max_retry"`
 	MaxMessageBytes  int  `toml:"max_message_bytes"`
 	IdempotentWrites bool `toml:"idempotent_writes"`
+
+	// Timeouts bounding a produce request. All default to the sarama defaults
+	// when unset (zero).
+	NetDialTimeout  config.Duration `toml:"net_dial_timeout"`
+	NetReadTimeout  config.Duration `toml:"net_read_timeout"`
+	NetWriteTimeout config.Duration `toml:"net_write_timeout"`
+	ProducerTimeout config.Duration `toml:"producer_timeout"`
 }
 
 // SetConfig on the sarama.Config object from the WriteConfig struct.
@@ -46,6 +54,23 @@ func (k *WriteConfig) SetConfig(cfg *sarama.Config, log telegraf.Logger) error {
 	if cfg.Producer.Idempotent {
 		cfg.Net.MaxOpenRequests = 1
 	}
+
+	// Only override the sarama defaults if the user configured a value.
+	// Negative values are passed through so sarama's own validation
+	// rejects them instead of silently keeping the default.
+	if k.NetDialTimeout != 0 {
+		cfg.Net.DialTimeout = time.Duration(k.NetDialTimeout)
+	}
+	if k.NetReadTimeout != 0 {
+		cfg.Net.ReadTimeout = time.Duration(k.NetReadTimeout)
+	}
+	if k.NetWriteTimeout != 0 {
+		cfg.Net.WriteTimeout = time.Duration(k.NetWriteTimeout)
+	}
+	if k.ProducerTimeout != 0 {
+		cfg.Producer.Timeout = time.Duration(k.ProducerTimeout)
+	}
+
 	return k.Config.SetConfig(cfg, log)
 }
 
@@ -86,7 +111,7 @@ func (k *Config) SetConfig(cfg *sarama.Config, log telegraf.Logger) error {
 	if k.Version != "" {
 		version, err := sarama.ParseKafkaVersion(k.Version)
 		if err != nil {
-			return err
+			return fmt.Errorf("parsing kafka version failed: %w", err)
 		}
 
 		cfg.Version = version
@@ -106,7 +131,7 @@ func (k *Config) SetConfig(cfg *sarama.Config, log telegraf.Logger) error {
 
 	tlsConfig, err := k.ClientConfig.TLSConfig()
 	if err != nil {
-		return err
+		return fmt.Errorf("configuring TLS failed: %w", err)
 	}
 
 	if tlsConfig != nil {
@@ -154,5 +179,14 @@ func (k *Config) SetConfig(cfg *sarama.Config, log telegraf.Logger) error {
 	case "constant", "":
 	}
 
-	return k.SetSASLConfig(cfg)
+	if err := k.SetSASLConfig(cfg); err != nil {
+		return fmt.Errorf("configuring SASL failed: %w", err)
+	}
+
+	// SASLv0 cannot be used with API requests so disable API requests in this case
+	if cfg.Net.SASL.Version == sarama.SASLHandshakeV0 {
+		cfg.ApiVersionsRequest = false
+	}
+
+	return nil
 }

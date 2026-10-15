@@ -1,6 +1,7 @@
 package snmp_lookup
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -11,8 +12,8 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/internal/snmp"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/common/snmp"
 	"github.com/influxdata/telegraf/plugins/processors"
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -52,6 +53,10 @@ func (*testSNMPConnection) Reconnect() error {
 	return errors.New("not implemented")
 }
 
+func (*testSNMPConnection) Close() error {
+	return errors.New("not implemented")
+}
+
 func TestRegistry(t *testing.T) {
 	require.Contains(t, processors.Processors, "snmp_lookup")
 	require.IsType(t, &SNMPLookup{}, processors.Processors["snmp_lookup"]())
@@ -87,9 +92,7 @@ func TestInit(t *testing.T) {
 		{
 			name: "wrong SNMP client config",
 			plugin: &SNMPLookup{
-				ClientConfig: snmp.ClientConfig{
-					Version: 99,
-				},
+				Version: 99,
 			},
 			expected: "parsing SNMP client config: invalid version",
 		},
@@ -136,26 +139,26 @@ func TestGetConnection(t *testing.T) {
 	}{
 		{
 			name: "agent error",
-			input: testutil.MustMetric(
+			input: metric.New(
 				"test",
 				map[string]string{
 					"source": "test://127.0.0.1",
 				},
-				map[string]interface{}{},
+				map[string]any{},
 				time.Unix(0, 0),
 			),
 			expected: "parsing agent tag: unsupported scheme: test",
 		},
 		{
 			name: "v2 trap",
-			input: testutil.MustMetric(
+			input: metric.New(
 				"test",
 				map[string]string{
 					"source":    "127.0.0.1",
 					"version":   "2c",
 					"community": "public",
 				},
-				map[string]interface{}{},
+				map[string]any{},
 				time.Unix(0, 0),
 			),
 		},
@@ -267,68 +270,68 @@ func TestAdd(t *testing.T) {
 		},
 		{
 			name: "no index tag",
-			input: testutil.MustMetric(
+			input: metric.New(
 				"test",
 				map[string]string{
 					"source": "127.0.0.1",
 				},
-				map[string]interface{}{"value": 42},
+				map[string]any{"value": 42},
 				time.Unix(0, 0),
 			),
 			expected: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"test",
 					map[string]string{
 						"source": "127.0.0.1",
 					},
-					map[string]interface{}{"value": 42},
+					map[string]any{"value": 42},
 					time.Unix(0, 0),
 				),
 			},
 		},
 		{
 			name: "cached",
-			input: testutil.MustMetric(
+			input: metric.New(
 				"test",
 				map[string]string{
 					"source": "127.0.0.1",
 					"index":  "123",
 				},
-				map[string]interface{}{"value": 42},
+				map[string]any{"value": 42},
 				time.Unix(0, 0),
 			),
 			expected: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"test",
 					map[string]string{
 						"source": "127.0.0.1",
 						"index":  "123",
 						"ifName": "eth123",
 					},
-					map[string]interface{}{"value": 42},
+					map[string]any{"value": 42},
 					time.Unix(0, 0),
 				),
 			},
 		},
 		{
 			name: "non-existing index",
-			input: testutil.MustMetric(
+			input: metric.New(
 				"test",
 				map[string]string{
 					"source": "127.0.0.1",
 					"index":  "999",
 				},
-				map[string]interface{}{"value": 42},
+				map[string]any{"value": 42},
 				time.Unix(0, 0),
 			),
 			expected: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"test",
 					map[string]string{
 						"source": "127.0.0.1",
 						"index":  "999",
 					},
-					map[string]interface{}{"value": 42},
+					map[string]any{"value": 42},
 					time.Unix(0, 0),
 				),
 			},
@@ -396,10 +399,10 @@ func TestExpiry(t *testing.T) {
 			".1.3.6.1.2.1.31.1.1.1.1.1": "eth1",
 		},
 	}
-	m := testutil.MustMetric(
+	m := metric.New(
 		"test",
 		map[string]string{"source": "127.0.0.1"},
-		map[string]interface{}{"value": 1.0},
+		map[string]any{"value": 1.0},
 		time.Unix(0, 0),
 	)
 
@@ -429,7 +432,7 @@ func TestExpiry(t *testing.T) {
 				"index":  "0",
 				"ifName": "eth0",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -439,7 +442,7 @@ func TestExpiry(t *testing.T) {
 				"index":  "1",
 				"ifName": "eth1",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -448,7 +451,7 @@ func TestExpiry(t *testing.T) {
 				"source": "127.0.0.1",
 				"index":  "123",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 	}
@@ -475,7 +478,7 @@ func TestExpiry(t *testing.T) {
 				"index":  "0",
 				"ifName": "eth0",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 	}
@@ -529,19 +532,19 @@ func TestOrdered(t *testing.T) {
 		metric.New(
 			"test1",
 			map[string]string{"source": "b.yourcompany.com"},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
 			"test2",
 			map[string]string{"source": "a.mycompany.com"},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
 			"test3",
 			map[string]string{"source": "127.0.0.1"},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 	}
@@ -568,7 +571,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "0",
 				"ifName": "eth0",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -578,7 +581,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "1",
 				"ifName": "eth1",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -588,7 +591,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "0",
 				"ifName": "eth0",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -598,7 +601,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "1",
 				"ifName": "eth1",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -608,7 +611,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "0",
 				"ifName": "eth0",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 		metric.New(
@@ -618,7 +621,7 @@ func TestOrdered(t *testing.T) {
 				"index":  "1",
 				"ifName": "eth1",
 			},
-			map[string]interface{}{"value": 1.0},
+			map[string]any{"value": 1.0},
 			time.Unix(0, 0),
 		),
 	}
@@ -629,4 +632,230 @@ func TestOrdered(t *testing.T) {
 	}, 3*time.Second, 100*time.Millisecond)
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics())
 	require.EqualValues(t, len(input), tsc.calls.Load())
+}
+
+// TestNoReenqueAfterStop makes sure we do not try to add new tasks to the
+// worker pool _after_ the plugin has stopped, e.g. after shutting down Telegraf.
+// See https://github.com/influxdata/telegraf/issues/17289
+func TestNoReenqueAfterStop(t *testing.T) {
+	plugin := &SNMPLookup{
+		AgentTag:              "source",
+		IndexTag:              "index",
+		CacheSize:             10,
+		CacheTTL:              config.Duration(1 * time.Minute),
+		ParallelLookups:       1,
+		MinTimeBetweenUpdates: config.Duration(500 * time.Millisecond),
+		Tags: []snmp.Field{
+			{
+				Name: "ifName",
+				Oid:  ".1.3.6.1.2.1.31.1.1.1.1",
+			},
+		},
+		Log: testutil.Logger{Name: "processors.snmp_lookup"},
+	}
+	require.NoError(t, plugin.Init())
+
+	// Setup the connection factory
+	tsc := &testSNMPConnection{values: make(map[string]string)}
+	plugin.getConnectionFunc = func(string) (snmp.Connection, error) { return tsc, nil }
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+
+	// Send two metrics for the
+	for range 2 {
+		m := metric.New(
+			"test",
+			map[string]string{
+				"source": "127.0.0.1",
+				"index":  "0",
+			},
+			map[string]any{"value": 1},
+			time.Now(),
+		)
+		require.NoError(t, plugin.Add(m, &acc))
+
+		// Wait until the first metric is resolved,
+		// so that the 2nd metric is deferred by MinTimeBetweenUpdates
+		require.Eventually(t, func() bool {
+			return acc.NMetrics() > 0
+		}, 3*time.Second, 100*time.Millisecond)
+	}
+
+	// Stop the plugin to simulate a telegraf reload or shutdown
+	plugin.Stop()
+
+	// Wait for the delayed update much longer than the deferred timer to
+	// make sure all deferred tasks were executed. In issue #17289 this caused
+	// a panic...
+	time.Sleep(2 * time.Duration(plugin.MinTimeBetweenUpdates))
+}
+
+// TestStopWithTaskInWorkerPool tests that stopping the plugin doesn't cause
+// a deadlock when there are tasks still running in the worker pool.
+// This test prevents regression of the deadlock issue described in #17359.
+func TestStopWithTaskInWorkerPool(t *testing.T) {
+	// Set a reasonable timeout for the entire test
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	plugin := &SNMPLookup{
+		AgentTag:              "source",
+		IndexTag:              "index",
+		CacheSize:             10,
+		CacheTTL:              config.Duration(1 * time.Minute),
+		ParallelLookups:       1,
+		MinTimeBetweenUpdates: config.Duration(500 * time.Millisecond),
+		Tags: []snmp.Field{
+			{
+				Name: "ifName",
+				Oid:  ".1.3.6.1.2.1.31.1.1.1.1",
+			},
+		},
+		Log: testutil.Logger{Name: "processors.snmp_lookup"},
+	}
+	require.NoError(t, plugin.Init())
+
+	// Use a buffered channel to prevent goroutine leaks
+	blocker := make(chan struct{}, 1)
+	taskStarted := make(chan struct{}, 1)
+
+	// Set up the connection factory
+	tsc := &testSNMPConnection{values: make(map[string]string)}
+	plugin.getConnectionFunc = func(string) (snmp.Connection, error) {
+		// Signal that the task has started
+		select {
+		case taskStarted <- struct{}{}:
+		default:
+		}
+
+		// This function is part of a worker pool task.
+		// Block here to ensure .Stop() is called while this task is running,
+		// which would previously cause a deadlock in removeBacklog().
+		select {
+		case <-blocker:
+			return tsc, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+
+	m := metric.New(
+		"test",
+		map[string]string{
+			"source": "127.0.0.1",
+			"index":  "0",
+		},
+		map[string]any{"value": 1},
+		time.Now(),
+	)
+
+	// Add the metric which will trigger a worker pool task
+	require.NoError(t, plugin.Add(m, &acc))
+
+	// Wait for the task to start and be blocked
+	select {
+	case <-taskStarted:
+		// The Task has started and is now blocked
+	case <-ctx.Done():
+		t.Fatal("Task didn't start within timeout")
+	}
+
+	// Give the task a moment to get blocked
+	time.Sleep(50 * time.Millisecond)
+
+	// Create a channel to track when Stop() completes
+	stopDone := make(chan struct{})
+
+	// Start Stop() in a goroutine so we can monitor for deadlock
+	go func() {
+		defer close(stopDone)
+		// Unblock the worker pool task to create the potential deadlock condition:
+		// s.pool.StopAndWait() waiting for task completion while
+		// task waits for lock in s.removeBacklog()
+		select {
+		case blocker <- struct{}{}:
+		default:
+		}
+
+		// This call would previously deadlock
+		plugin.Stop()
+	}()
+
+	// Wait for Stop() to complete or timeout
+	select {
+	case <-stopDone:
+		// Success! Stop() completed without deadlock
+		t.Log("Stop() completed successfully without deadlock")
+	case <-ctx.Done():
+		t.Fatal("Deadlock detected: Stop() didn't complete within timeout")
+	}
+}
+
+// Run the test with Go's built-in timeout
+func TestStopWithTaskInWorkerPoolWithGoTimeout(t *testing.T) {
+	// This test should complete quickly if the deadlock is fixed
+	if testing.Short() {
+		t.Skip("Skipping deadlock test in short mode")
+	}
+
+	plugin := &SNMPLookup{
+		AgentTag:              "source",
+		IndexTag:              "index",
+		CacheSize:             10,
+		CacheTTL:              config.Duration(1 * time.Minute),
+		ParallelLookups:       1,
+		MinTimeBetweenUpdates: config.Duration(500 * time.Millisecond),
+		Tags: []snmp.Field{
+			{
+				Name: "ifName",
+				Oid:  ".1.3.6.1.2.1.31.1.1.1.1",
+			},
+		},
+		Log: testutil.Logger{Name: "processors.snmp_lookup"},
+	}
+	require.NoError(t, plugin.Init())
+
+	blocker := make(chan struct{})
+	taskReady := make(chan struct{})
+
+	// Set up the connection factory
+	tsc := &testSNMPConnection{values: make(map[string]string)}
+	plugin.getConnectionFunc = func(string) (snmp.Connection, error) {
+		// Signal that we're about to block
+		close(taskReady)
+		// Block until Stop() starts
+		<-blocker
+		return tsc, nil
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+
+	m := metric.New(
+		"test",
+		map[string]string{
+			"source": "127.0.0.1",
+			"index":  "0",
+		},
+		map[string]any{"value": 1},
+		time.Now(),
+	)
+	require.NoError(t, plugin.Add(m, &acc))
+
+	// Wait for the task to be ready
+	<-taskReady
+
+	// Small delay to ensure the task is blocked
+	time.Sleep(10 * time.Millisecond)
+
+	// Unblock the task and immediately stop - this creates the race condition
+	close(blocker)
+	plugin.Stop() // This should not deadlock
+
+	// If we reach here, the test passed
+	t.Log("Successfully avoided deadlock during Stop()")
 }

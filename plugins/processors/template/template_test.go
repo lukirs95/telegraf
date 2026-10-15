@@ -22,10 +22,10 @@ func TestName(t *testing.T) {
 	require.NoError(t, err)
 
 	input := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),
@@ -34,12 +34,12 @@ func TestName(t *testing.T) {
 
 	actual := plugin.Apply(input...)
 	expected := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{
 				"measurement": "cpu",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),
@@ -58,10 +58,10 @@ func TestNameTemplate(t *testing.T) {
 	require.NoError(t, err)
 
 	input := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{"foo": "measurement"},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),
@@ -70,13 +70,13 @@ func TestNameTemplate(t *testing.T) {
 
 	actual := plugin.Apply(input...)
 	expected := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{
 				"foo":         "measurement",
 				"measurement": "cpu",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),
@@ -98,14 +98,14 @@ func TestTagTemplateConcatenate(t *testing.T) {
 	}
 
 	// create metric for testing
-	input := []telegraf.Metric{testutil.MustMetric("Tags", map[string]string{"hostname": "localhost", "level": "debug"}, nil, now)}
+	input := []telegraf.Metric{metric.New("Tags", map[string]string{"hostname": "localhost", "level": "debug"}, nil, now)}
 
 	// act
 	actual := tmp.Apply(input[0])
 
 	// assert
 	expected := []telegraf.Metric{
-		testutil.MustMetric("Tags", map[string]string{"hostname": "localhost", "level": "debug", "topic": "localhost.debug"}, nil, now),
+		metric.New("Tags", map[string]string{"hostname": "localhost", "level": "debug", "topic": "localhost.debug"}, nil, now),
 	}
 	testutil.RequireMetricsEqual(t, expected, actual)
 }
@@ -123,8 +123,8 @@ func TestMetricMissingTagsIsNotLost(t *testing.T) {
 	}
 
 	// create metrics for testing
-	m1 := testutil.MustMetric("Works", map[string]string{"hostname": "localhost", "level": "debug"}, nil, now)
-	m2 := testutil.MustMetric("Fails", map[string]string{"hostname": "localhost"}, nil, now)
+	m1 := metric.New("Works", map[string]string{"hostname": "localhost", "level": "debug"}, nil, now)
+	m2 := metric.New("Fails", map[string]string{"hostname": "localhost"}, nil, now)
 
 	// act
 	actual := tmp.Apply(m1, m2)
@@ -147,51 +147,21 @@ func TestTagAndFieldConcatenate(t *testing.T) {
 	}
 
 	// create metric for testing
-	m1 := testutil.MustMetric("weather", map[string]string{"location": "us-midwest"}, map[string]interface{}{"temperature": "too warm"}, now)
+	m1 := metric.New("weather", map[string]string{"location": "us-midwest"}, map[string]any{"temperature": "too warm"}, now)
 
 	// act
 	actual := tmp.Apply(m1)
 
 	// assert
 	expected := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"weather",
 			map[string]string{"location": "us-midwest", "LocalTemp": "us-midwest is too warm"},
-			map[string]interface{}{"temperature": "too warm"},
+			map[string]any{"temperature": "too warm"},
 			now,
 		),
 	}
 	testutil.RequireMetricsEqual(t, expected, actual)
-}
-
-func TestFieldList(t *testing.T) {
-	// Prepare
-	plugin := Template{Tag: "fields", Template: "{{.FieldList}}"}
-	require.NoError(t, plugin.Init())
-
-	// Run
-	m := testutil.TestMetric(1.23)
-	actual := plugin.Apply(m)
-
-	// Verify
-	expected := m.Copy()
-	expected.AddTag("fields", "map[value:1.23]")
-	testutil.RequireMetricsEqual(t, []telegraf.Metric{expected}, actual)
-}
-
-func TestTagList(t *testing.T) {
-	// Prepare
-	plugin := Template{Tag: "tags", Template: "{{.TagList}}"}
-	require.NoError(t, plugin.Init())
-
-	// Run
-	m := testutil.TestMetric(1.23)
-	actual := plugin.Apply(m)
-
-	// Verify
-	expected := m.Copy()
-	expected.AddTag("tags", "map[tag1:value1]")
-	testutil.RequireMetricsEqual(t, []telegraf.Metric{expected}, actual)
 }
 
 func TestFields(t *testing.T) {
@@ -316,10 +286,10 @@ func TestSprig(t *testing.T) {
 	require.NoError(t, err)
 
 	input := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{"foo": "MEASUREMENT"},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),
@@ -328,13 +298,13 @@ func TestSprig(t *testing.T) {
 
 	actual := plugin.Apply(input...)
 	expected := []telegraf.Metric{
-		testutil.MustMetric(
+		metric.New(
 			"cpu",
 			map[string]string{
 				"foo":         "MEASUREMENT",
 				"measurement": "CPU",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"time_idle": 42,
 			},
 			time.Unix(0, 0),

@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -26,7 +27,7 @@ func TestEndpoint(t *testing.T) {
 		{
 			name: "no endpoints",
 			handler: &mockHandler{
-				responseMap: map[string]interface{}{
+				responseMap: map[string]any{
 					"/endpoints/": &discoveryv1.EndpointSliceList{},
 				},
 			},
@@ -35,43 +36,41 @@ func TestEndpoint(t *testing.T) {
 		{
 			name: "collect ready endpoints",
 			handler: &mockHandler{
-				responseMap: map[string]interface{}{
+				responseMap: map[string]any{
 					"/endpoints/": &discoveryv1.EndpointSliceList{
 						Items: []discoveryv1.EndpointSlice{
 							{
 								Endpoints: []discoveryv1.Endpoint{
 									{
-										Hostname: toPtr("storage-6"),
-										NodeName: toPtr("b.storage.internal"),
+										Hostname: new("storage-6"),
+										NodeName: new("b.storage.internal"),
 										TargetRef: &corev1.ObjectReference{
 											Kind: "pod",
 											Name: "storage-6",
 										},
 										Conditions: discoveryv1.EndpointConditions{
-											Ready: toPtr(true),
+											Ready: new(true),
 										},
 									},
 								},
 								Ports: []discoveryv1.EndpointPort{
 									{
-										Name:     toPtr("server"),
-										Protocol: toPtr(corev1.Protocol("TCP")),
-										Port:     toPtr(int32(8080)),
+										Name:     new("server"),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
 									},
 								},
-								ObjectMeta: metav1.ObjectMeta{
-									Generation:        12,
-									Namespace:         "ns1",
-									Name:              "storage",
-									CreationTimestamp: metav1.Time{Time: now},
-								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
 							},
 						},
 					},
 				},
 			},
 			output: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"kubernetes_endpoint",
 					map[string]string{
 						"endpoint_name": "storage",
@@ -82,7 +81,7 @@ func TestEndpoint(t *testing.T) {
 						"port_protocol": "TCP",
 						"pod":           "storage-6",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"ready":      true,
 						"port":       int32(8080),
 						"generation": int64(12),
@@ -96,34 +95,32 @@ func TestEndpoint(t *testing.T) {
 		{
 			name: "collect notready endpoints",
 			handler: &mockHandler{
-				responseMap: map[string]interface{}{
+				responseMap: map[string]any{
 					"/endpoints/": &discoveryv1.EndpointSliceList{
 						Items: []discoveryv1.EndpointSlice{
 							{
 								Endpoints: []discoveryv1.Endpoint{
 									{
-										Hostname: toPtr("storage-6"),
-										NodeName: toPtr("b.storage.internal"),
+										Hostname: new("storage-6"),
+										NodeName: new("b.storage.internal"),
 										TargetRef: &corev1.ObjectReference{
 											Kind: "pod",
 											Name: "storage-6",
 										},
 										Conditions: discoveryv1.EndpointConditions{
-											Ready: toPtr(false),
+											Ready: new(false),
 										},
 									},
 								},
-								ObjectMeta: metav1.ObjectMeta{
-									Generation:        12,
-									Namespace:         "ns1",
-									Name:              "storage",
-									CreationTimestamp: metav1.Time{Time: now},
-								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
 								Ports: []discoveryv1.EndpointPort{
 									{
-										Name:     toPtr("server"),
-										Protocol: toPtr(corev1.Protocol("TCP")),
-										Port:     toPtr(int32(8080)),
+										Name:     new("server"),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
 									},
 								},
 							},
@@ -132,7 +129,7 @@ func TestEndpoint(t *testing.T) {
 				},
 			},
 			output: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"kubernetes_endpoint",
 					map[string]string{
 						"endpoint_name": "storage",
@@ -143,7 +140,7 @@ func TestEndpoint(t *testing.T) {
 						"port_protocol": "TCP",
 						"pod":           "storage-6",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"ready":      false,
 						"port":       int32(8080),
 						"generation": int64(12),
@@ -157,43 +154,41 @@ func TestEndpoint(t *testing.T) {
 		{
 			name: "endpoints missing node_name",
 			handler: &mockHandler{
-				responseMap: map[string]interface{}{
+				responseMap: map[string]any{
 					"/endpoints/": &discoveryv1.EndpointSliceList{
 						Items: []discoveryv1.EndpointSlice{
 							{
 								Endpoints: []discoveryv1.Endpoint{
 									{
-										Hostname: toPtr("storage-6"),
+										Hostname: new("storage-6"),
 										TargetRef: &corev1.ObjectReference{
 											Kind: "pod",
 											Name: "storage-6",
 										},
 										Conditions: discoveryv1.EndpointConditions{
-											Ready: toPtr(false),
+											Ready: new(false),
 										},
 									},
 									{
-										Hostname: toPtr("storage-12"),
+										Hostname: new("storage-12"),
 										TargetRef: &corev1.ObjectReference{
 											Kind: "pod",
 											Name: "storage-12",
 										},
 										Conditions: discoveryv1.EndpointConditions{
-											Ready: toPtr(true),
+											Ready: new(true),
 										},
 									},
 								},
-								ObjectMeta: metav1.ObjectMeta{
-									Generation:        12,
-									Namespace:         "ns1",
-									Name:              "storage",
-									CreationTimestamp: metav1.Time{Time: now},
-								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
 								Ports: []discoveryv1.EndpointPort{
 									{
-										Name:     toPtr("server"),
-										Protocol: toPtr(corev1.Protocol("TCP")),
-										Port:     toPtr(int32(8080)),
+										Name:     new("server"),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
 									},
 								},
 							},
@@ -202,7 +197,7 @@ func TestEndpoint(t *testing.T) {
 				},
 			},
 			output: []telegraf.Metric{
-				testutil.MustMetric(
+				metric.New(
 					"kubernetes_endpoint",
 					map[string]string{
 						"endpoint_name": "storage",
@@ -212,7 +207,7 @@ func TestEndpoint(t *testing.T) {
 						"port_protocol": "TCP",
 						"pod":           "storage-6",
 					},
-					map[string]interface{}{
+					map[string]any{
 						"ready":      false,
 						"port":       int32(8080),
 						"generation": int64(12),
@@ -220,7 +215,7 @@ func TestEndpoint(t *testing.T) {
 					},
 					time.Unix(0, 0),
 				),
-				testutil.MustMetric(
+				metric.New(
 					"kubernetes_endpoint",
 					map[string]string{
 						"endpoint_name": "storage",
@@ -230,7 +225,209 @@ func TestEndpoint(t *testing.T) {
 						"port_protocol": "TCP",
 						"pod":           "storage-12",
 					},
-					map[string]interface{}{
+					map[string]any{
+						"ready":      true,
+						"port":       int32(8080),
+						"generation": int64(12),
+						"created":    now.UnixNano(),
+					},
+					time.Unix(0, 0),
+				),
+			},
+			hasError: false,
+		},
+		{
+			name: "endpoints null",
+			handler: &mockHandler{
+				responseMap: map[string]any{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
+							{
+								Endpoints:         nil,
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     new("server"),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			output:   make([]telegraf.Metric, 0),
+			hasError: false,
+		},
+		{
+			name: "default port name",
+			handler: &mockHandler{
+				responseMap: map[string]any{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
+							{
+								Endpoints: []discoveryv1.Endpoint{
+									{
+										Hostname: new("storage-6"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
+										},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: new(false),
+										},
+									},
+								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     new(""),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			output: []telegraf.Metric{
+				metric.New(
+					"kubernetes_endpoint",
+					map[string]string{
+						"endpoint_name": "storage",
+						"namespace":     "ns1",
+						"hostname":      "storage-6",
+						"port_name":     "",
+						"port_protocol": "TCP",
+						"pod":           "storage-6",
+					},
+					map[string]any{
+						"ready":      false,
+						"port":       int32(8080),
+						"generation": int64(12),
+						"created":    now.UnixNano(),
+					},
+					time.Unix(0, 0),
+				),
+			},
+			hasError: false,
+		},
+		{
+			name: "ports null",
+			handler: &mockHandler{
+				responseMap: map[string]any{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
+							{
+								Endpoints: []discoveryv1.Endpoint{
+									{
+										Hostname: new("storage-6"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
+										},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: new(false),
+										},
+									},
+									{
+										Hostname: new("storage-12"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-12",
+										},
+										Conditions: discoveryv1.EndpointConditions{
+											Ready: new(true),
+										},
+									},
+								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
+								Ports:             nil,
+							},
+						},
+					},
+				},
+			},
+			output:   make([]telegraf.Metric, 0),
+			hasError: false,
+		},
+		{
+			name: "endpoints and ports null",
+			handler: &mockHandler{
+				responseMap: map[string]any{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
+							{
+								Endpoints:         nil,
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
+								Ports:             nil,
+							},
+						},
+					},
+				},
+			},
+			output:   make([]telegraf.Metric, 0),
+			hasError: false,
+		},
+		{
+			name: "empty conditions",
+			handler: &mockHandler{
+				responseMap: map[string]any{
+					"/endpoints/": &discoveryv1.EndpointSliceList{
+						Items: []discoveryv1.EndpointSlice{
+							{
+								Endpoints: []discoveryv1.Endpoint{
+									{
+										Hostname: new("storage-6"),
+										TargetRef: &corev1.ObjectReference{
+											Kind: "pod",
+											Name: "storage-6",
+										},
+										Conditions: discoveryv1.EndpointConditions{},
+									},
+								},
+								Generation:        12,
+								Namespace:         "ns1",
+								Name:              "storage",
+								CreationTimestamp: metav1.Time{Time: now},
+								Ports: []discoveryv1.EndpointPort{
+									{
+										Name:     new(""),
+										Protocol: new(corev1.Protocol("TCP")),
+										Port:     new(int32(8080)),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			output: []telegraf.Metric{
+				metric.New(
+					"kubernetes_endpoint",
+					map[string]string{
+						"endpoint_name": "storage",
+						"namespace":     "ns1",
+						"hostname":      "storage-6",
+						"port_name":     "",
+						"port_protocol": "TCP",
+						"pod":           "storage-6",
+					},
+					map[string]any{
 						"ready":      true,
 						"port":       int32(8080),
 						"generation": int64(12),

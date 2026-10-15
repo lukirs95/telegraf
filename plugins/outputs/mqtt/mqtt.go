@@ -34,7 +34,6 @@ type message struct {
 
 type MQTT struct {
 	Topic           string          `toml:"topic"`
-	BatchMessage    bool            `toml:"batch" deprecated:"1.25.2;1.35.0;use 'layout = \"batch\"' instead"`
 	Layout          string          `toml:"layout"`
 	HomieDeviceName string          `toml:"homie_device_name"`
 	HomieNodeID     string          `toml:"homie_node_id"`
@@ -76,7 +75,7 @@ func (m *MQTT) Init() error {
 	if err != nil {
 		return fmt.Errorf("creating topic template failed: %w", err)
 	}
-	for _, p := range strings.Split(topic, "/") {
+	for p := range strings.SplitSeq(topic, "/") {
 		if strings.ContainsAny(p, "#+") {
 			return fmt.Errorf("found forbidden character %s in the topic name %s", p, topic)
 		}
@@ -85,12 +84,7 @@ func (m *MQTT) Init() error {
 
 	switch m.Layout {
 	case "":
-		// For backward compatibility
-		if m.BatchMessage {
-			m.Layout = "batch"
-		} else {
-			m.Layout = "non-batch"
-		}
+		m.Layout = "non-batch"
 	case "non-batch", "batch", "field":
 	case "homie-v4":
 		if m.HomieDeviceName == "" {
@@ -115,6 +109,8 @@ func (m *MQTT) Init() error {
 	default:
 		return fmt.Errorf("invalid layout %q", m.Layout)
 	}
+
+	m.MqttConfig.ClientTrace = m.MqttConfig.ClientTrace || m.Log.Level().Includes(telegraf.Trace)
 
 	return nil
 }
@@ -315,7 +311,7 @@ func (m *MQTT) generateTopic(metric telegraf.Metric) (string, error) {
 		return "", err
 	}
 	var ts []string
-	for _, p := range strings.Split(b.String(), "/") {
+	for p := range strings.SplitSeq(b.String(), "/") {
 		if p != "" {
 			ts = append(ts, p)
 		}
@@ -335,11 +331,9 @@ func (m *MQTT) generateTopic(metric telegraf.Metric) (string, error) {
 func init() {
 	outputs.Add("mqtt", func() telegraf.Output {
 		return &MQTT{
-			MqttConfig: mqtt.MqttConfig{
-				KeepAlive:     30,
-				Timeout:       config.Duration(5 * time.Second),
-				AutoReconnect: true,
-			},
+			KeepAlive:     30,
+			Timeout:       config.Duration(5 * time.Second),
+			AutoReconnect: true,
 		}
 	})
 }

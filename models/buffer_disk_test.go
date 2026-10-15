@@ -18,7 +18,7 @@ import (
 // https://github.com/influxdata/telegraf/issues/16696
 func TestDiskBufferTruncate(t *testing.T) {
 	// Create a disk buffer
-	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir())
+	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir(), true)
 	require.NoError(t, err)
 	defer buf.Close()
 	diskBuf, ok := buf.(*DiskBuffer)
@@ -27,7 +27,7 @@ func TestDiskBufferTruncate(t *testing.T) {
 	// Add some metrics to the buffer
 	expected := make([]telegraf.Metric, 0, 10)
 	for i := range 10 {
-		m := metric.New("test", map[string]string{}, map[string]interface{}{"value": i}, time.Now())
+		m := metric.New("test", map[string]string{}, map[string]any{"value": i}, time.Now())
 		buf.Add(m)
 		expected = append(expected, m)
 	}
@@ -62,11 +62,9 @@ func TestDiskBufferTruncate(t *testing.T) {
 	tx.AcceptAll()
 	buf.EndTransaction(tx)
 
-	// The buffer should be truncated completely, however due to the WAL
-	// implementation the file cannot be completely empty. So we expect one
-	// entry left on disk but this one being masked...
-	require.Equal(t, 1, diskBuf.entries())
-	require.Equal(t, []int{0}, diskBuf.mask)
+	// Ensure the buffer was fully truncated on disk and the mask is consistent with that
+	require.Zero(t, diskBuf.entries())
+	require.Empty(t, diskBuf.mask)
 
 	// We shouldn't get any metric when requesting a new batch
 	tx = buf.BeginTransaction(4)
@@ -78,7 +76,7 @@ func TestDiskBufferTruncate(t *testing.T) {
 // https://github.com/influxdata/telegraf/issues/16981
 func TestDiskBufferEmptyReuse(t *testing.T) {
 	// Create a disk buffer
-	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir())
+	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir(), true)
 	require.NoError(t, err)
 	defer buf.Close()
 	diskBuf, ok := buf.(*DiskBuffer)
@@ -87,7 +85,7 @@ func TestDiskBufferEmptyReuse(t *testing.T) {
 	// Add some metrics to the buffer
 	expected := make([]telegraf.Metric, 0, 5)
 	for i := range 5 {
-		m := metric.New("test", map[string]string{}, map[string]interface{}{"value": i}, time.Now())
+		m := metric.New("test", map[string]string{}, map[string]any{"value": i}, time.Now())
 		buf.Add(m)
 		expected = append(expected, m)
 	}
@@ -98,13 +96,10 @@ func TestDiskBufferEmptyReuse(t *testing.T) {
 	tx.AcceptAll()
 	buf.EndTransaction(tx)
 
-	// The buffer must have been truncated on disk and should be empty now.
-	// Due to the special way an empty buffer is treated, it will still contain
-	// an entry as we cannot fully truncate it up to now.
-	require.True(t, diskBuf.isEmpty)
-	require.Equal(t, 0, diskBuf.Len())
-	require.Equal(t, 1, diskBuf.entries())
-	require.Len(t, diskBuf.mask, 1)
+	// Ensure all storage elements of the buffer are consistent with it being empty
+	require.Zero(t, diskBuf.length())
+	require.Zero(t, diskBuf.entries())
+	require.Empty(t, diskBuf.mask)
 
 	// Try to read the buffer again. This should return an empty transaction...
 	tx = buf.BeginTransaction(5)
@@ -112,7 +107,7 @@ func TestDiskBufferEmptyReuse(t *testing.T) {
 	buf.EndTransaction(tx)
 
 	// Now add another set of metrics and make sure we can read it
-	m := metric.New("test", map[string]string{}, map[string]interface{}{"value": 42}, time.Now())
+	m := metric.New("test", map[string]string{}, map[string]any{"value": 42}, time.Now())
 	buf.Add(m)
 
 	// Read the complete set of metrics such that the buffer is empty again
@@ -131,7 +126,7 @@ func TestDiskBufferEmptyClose(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	// Create a disk buffer
-	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", tmpdir)
+	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", tmpdir, true)
 	require.NoError(t, err)
 	defer buf.Close()
 	diskBuf, ok := buf.(*DiskBuffer)
@@ -140,7 +135,7 @@ func TestDiskBufferEmptyClose(t *testing.T) {
 	// Add some metrics to the buffer
 	expected := make([]telegraf.Metric, 0, 5)
 	for i := range 5 {
-		m := metric.New("test", map[string]string{}, map[string]interface{}{"value": i}, time.Now())
+		m := metric.New("test", map[string]string{}, map[string]any{"value": i}, time.Now())
 		buf.Add(m)
 		expected = append(expected, m)
 	}
@@ -152,14 +147,14 @@ func TestDiskBufferEmptyClose(t *testing.T) {
 	buf.EndTransaction(tx)
 
 	// Make sure the buffer was fully emptied
-	require.True(t, diskBuf.isEmpty)
-	require.Equal(t, 0, diskBuf.Len())
+	require.Zero(t, diskBuf.length())
+	require.Zero(t, diskBuf.entries())
 
 	// Close the buffer to simulate stopping Telegraf in a normal shutdown
 	require.NoError(t, diskBuf.Close())
 
 	// Reopen the buffer with the parameters above to see the same buffer
-	reopened, err := NewBuffer("test", "id123", "", 0, "disk_write_through", tmpdir)
+	reopened, err := NewBuffer("test", "id123", "", 0, "disk_write_through", tmpdir, true)
 	require.NoError(t, err)
 	defer reopened.Close()
 	_, ok = reopened.(*DiskBuffer)
@@ -172,7 +167,7 @@ func TestDiskBufferEmptyClose(t *testing.T) {
 
 	// However, adding a new metric to the buffer should work
 	// Now add another set of metrics and make sure we can read it
-	m := metric.New("test", map[string]string{}, map[string]interface{}{"value": 42}, time.Now())
+	m := metric.New("test", map[string]string{}, map[string]any{"value": 42}, time.Now())
 	reopened.Add(m)
 
 	// Read the complete set of metrics such that the buffer is empty again
@@ -183,12 +178,12 @@ func TestDiskBufferEmptyClose(t *testing.T) {
 }
 
 func TestDiskBufferRetainsTrackingInformation(t *testing.T) {
-	m := metric.New("cpu", map[string]string{}, map[string]interface{}{"value": 42.0}, time.Unix(0, 0))
+	m := metric.New("cpu", map[string]string{}, map[string]any{"value": 42.0}, time.Unix(0, 0))
 
 	var delivered int
 	mm, _ := metric.WithTracking(m, func(telegraf.DeliveryInfo) { delivered++ })
 
-	buf, err := NewBuffer("test", "123", "", 0, "disk_write_through", t.TempDir())
+	buf, err := NewBuffer("test", "123", "", 0, "disk_write_through", t.TempDir(), true)
 	require.NoError(t, err)
 	buf.Stats().MetricsAdded.Set(0)
 	buf.Stats().MetricsWritten.Set(0)
@@ -203,23 +198,23 @@ func TestDiskBufferRetainsTrackingInformation(t *testing.T) {
 }
 
 func TestDiskBufferTrackingDroppedFromOldWal(t *testing.T) {
-	m := metric.New("cpu", map[string]string{}, map[string]interface{}{"value": 42.0}, time.Unix(0, 0))
+	m := metric.New("cpu", map[string]string{}, map[string]any{"value": 42.0}, time.Unix(0, 0))
 
 	tm, _ := metric.WithTracking(m, func(telegraf.DeliveryInfo) {})
 	metrics := []telegraf.Metric{
 		// Basic metric with 1 field, 0 timestamp
-		metric.New("cpu", map[string]string{}, map[string]interface{}{"value": 42.0}, time.Unix(0, 0)),
+		metric.New("cpu", map[string]string{}, map[string]any{"value": 42.0}, time.Unix(0, 0)),
 		// Basic metric with 1 field, different timestamp
-		metric.New("cpu", map[string]string{}, map[string]interface{}{"value": 20.0}, time.Now()),
+		metric.New("cpu", map[string]string{}, map[string]any{"value": 20.0}, time.Now()),
 		// Metric with a field
-		metric.New("cpu", map[string]string{"x": "y"}, map[string]interface{}{"value": 18.0}, time.Now()),
+		metric.New("cpu", map[string]string{"x": "y"}, map[string]any{"value": 18.0}, time.Now()),
 		// Tracking metric
 		tm,
 		// Metric with lots of tag types
 		metric.New(
 			"cpu",
 			map[string]string{},
-			map[string]interface{}{
+			map[string]any{
 				"value_f64":        20.0,
 				"value_uint64":     uint64(10),
 				"value_int16":      int16(5),
@@ -236,7 +231,9 @@ func TestDiskBufferTrackingDroppedFromOldWal(t *testing.T) {
 
 	// Prefill the WAL file
 	path := t.TempDir()
-	walfile, err := wal.Open(filepath.Join(path, "123"), nil)
+	walfile, err := wal.Open(filepath.Join(path, "123"), &wal.Options{
+		AllowEmpty: true,
+	})
 	require.NoError(t, err)
 	defer walfile.Close()
 	for i, m := range metrics {
@@ -247,7 +244,7 @@ func TestDiskBufferTrackingDroppedFromOldWal(t *testing.T) {
 	walfile.Close()
 
 	// Create a buffer
-	buf, err := NewBuffer("123", "123", "", 0, "disk_write_through", path)
+	buf, err := NewBuffer("123", "123", "", 0, "disk_write_through", path, true)
 	require.NoError(t, err)
 	buf.Stats().MetricsAdded.Set(0)
 	buf.Stats().MetricsWritten.Set(0)
@@ -286,7 +283,7 @@ func TestDiskBufferTrackingOnOutputOutage(t *testing.T) {
 		m := metric.New(
 			"cpu",
 			map[string]string{},
-			map[string]interface{}{"value": i},
+			map[string]any{"value": i},
 			time.Unix(0, 0),
 		)
 		tm, tid := metric.WithTracking(m, func(di telegraf.DeliveryInfo) {
@@ -302,7 +299,7 @@ func TestDiskBufferTrackingOnOutputOutage(t *testing.T) {
 	}
 
 	// Create a disk buffer
-	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir())
+	buf, err := NewBuffer("test", "id123", "", 0, "disk_write_through", t.TempDir(), true)
 	require.NoError(t, err)
 	defer buf.Close()
 	diskBuf, ok := buf.(*DiskBuffer)
@@ -311,7 +308,6 @@ func TestDiskBufferTrackingOnOutputOutage(t *testing.T) {
 	// Make sure the new buffer is fully empty
 	require.Zero(t, diskBuf.length())
 	require.Zero(t, diskBuf.entries())
-	require.False(t, diskBuf.isEmpty, "disk-buffer empty flag should not be set on truely empty WAL")
 
 	// Add a first metric and make sure we get it on transaction. Accept the
 	// metric simulating that the buffer is up.

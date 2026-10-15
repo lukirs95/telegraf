@@ -10,12 +10,12 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/plugins/common/psutil"
+	"github.com/influxdata/telegraf/plugins/common/psutil/psutiltest"
 	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestNetIOStats(t *testing.T) {
-	var mps psutil.MockPS
+	var mps psutiltest.MockPS
 	defer mps.AssertExpectations(t)
 
 	netio := net.IOCountersStat{
@@ -32,17 +32,6 @@ func TestNetIOStats(t *testing.T) {
 
 	mps.On("NetIO").Return([]net.IOCountersStat{netio}, nil)
 
-	netprotos := []net.ProtoCountersStat{
-		{
-			Protocol: "Udp",
-			Stats: map[string]int64{
-				"InDatagrams": 4655,
-				"NoPorts":     892592,
-			},
-		},
-	}
-	mps.On("NetProto").Return(netprotos, nil)
-
 	t.Setenv("HOST_SYS", filepath.Join("testdata", "general", "sys"))
 
 	plugin := &Net{ps: &mps, skipChecks: true}
@@ -54,7 +43,7 @@ func TestNetIOStats(t *testing.T) {
 		metric.New(
 			"net",
 			map[string]string{"interface": "eth0"},
-			map[string]interface{}{
+			map[string]any{
 				"bytes_sent":   uint64(1123),
 				"bytes_recv":   uint64(8734422),
 				"packets_sent": uint64(781),
@@ -68,21 +57,12 @@ func TestNetIOStats(t *testing.T) {
 			time.Unix(0, 0),
 			telegraf.Counter,
 		),
-		metric.New(
-			"net",
-			map[string]string{"interface": "all"},
-			map[string]interface{}{
-				"udp_noports":     int64(892592),
-				"udp_indatagrams": int64(4655),
-			},
-			time.Unix(0, 0),
-		),
 	}
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
 }
 
 func TestNetIOStatsSpeedUnsupported(t *testing.T) {
-	var mps psutil.MockPS
+	var mps psutiltest.MockPS
 	defer mps.AssertExpectations(t)
 
 	netio := net.IOCountersStat{
@@ -99,17 +79,6 @@ func TestNetIOStatsSpeedUnsupported(t *testing.T) {
 
 	mps.On("NetIO").Return([]net.IOCountersStat{netio}, nil)
 
-	netprotos := []net.ProtoCountersStat{
-		{
-			Protocol: "Udp",
-			Stats: map[string]int64{
-				"InDatagrams": 4655,
-				"NoPorts":     892592,
-			},
-		},
-	}
-	mps.On("NetProto").Return(netprotos, nil)
-
 	t.Setenv("HOST_SYS", filepath.Join("testdata", "general", "sys"))
 
 	plugin := &Net{ps: &mps, skipChecks: true}
@@ -121,7 +90,7 @@ func TestNetIOStatsSpeedUnsupported(t *testing.T) {
 		metric.New(
 			"net",
 			map[string]string{"interface": "eth1"},
-			map[string]interface{}{
+			map[string]any{
 				"bytes_sent":   uint64(1123),
 				"bytes_recv":   uint64(8734422),
 				"packets_sent": uint64(781),
@@ -135,21 +104,12 @@ func TestNetIOStatsSpeedUnsupported(t *testing.T) {
 			time.Unix(0, 0),
 			telegraf.Counter,
 		),
-		metric.New(
-			"net",
-			map[string]string{"interface": "all"},
-			map[string]interface{}{
-				"udp_noports":     int64(892592),
-				"udp_indatagrams": int64(4655),
-			},
-			time.Unix(0, 0),
-		),
 	}
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
 }
 
 func TestNetIOStatsNoSpeedFile(t *testing.T) {
-	var mps psutil.MockPS
+	var mps psutiltest.MockPS
 	defer mps.AssertExpectations(t)
 
 	netio := net.IOCountersStat{
@@ -166,17 +126,6 @@ func TestNetIOStatsNoSpeedFile(t *testing.T) {
 
 	mps.On("NetIO").Return([]net.IOCountersStat{netio}, nil)
 
-	netprotos := []net.ProtoCountersStat{
-		{
-			Protocol: "Udp",
-			Stats: map[string]int64{
-				"InDatagrams": 4655,
-				"NoPorts":     892592,
-			},
-		},
-	}
-	mps.On("NetProto").Return(netprotos, nil)
-
 	t.Setenv("HOST_SYS", filepath.Join("testdata", "general", "sys"))
 
 	plugin := &Net{ps: &mps, skipChecks: true}
@@ -188,7 +137,7 @@ func TestNetIOStatsNoSpeedFile(t *testing.T) {
 		metric.New(
 			"net",
 			map[string]string{"interface": "eth2"},
-			map[string]interface{}{
+			map[string]any{
 				"bytes_sent":   uint64(1123),
 				"bytes_recv":   uint64(8734422),
 				"packets_sent": uint64(781),
@@ -201,15 +150,6 @@ func TestNetIOStatsNoSpeedFile(t *testing.T) {
 			},
 			time.Unix(0, 0),
 			telegraf.Counter,
-		),
-		metric.New(
-			"net",
-			map[string]string{"interface": "all"},
-			map[string]interface{}{
-				"udp_noports":     int64(892592),
-				"udp_indatagrams": int64(4655),
-			},
-			time.Unix(0, 0),
 		),
 	}
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -56,7 +59,7 @@ func TestGatherActivity(t *testing.T) {
 		metric.New(
 			"chrony_activity",
 			map[string]string{"source": addr},
-			map[string]interface{}{
+			map[string]any{
 				"online":        34,
 				"offline":       6,
 				"burst_online":  2,
@@ -128,7 +131,7 @@ func TestGatherTracking(t *testing.T) {
 				"leap_status":  "not synchronized",
 				"stratum":      "3",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"system_time":     0.000020390,
 				"last_offset":     0.000012651,
 				"rms_offset":      0.000025577,
@@ -152,6 +155,59 @@ func TestGatherTracking(t *testing.T) {
 
 	actual := acc.GetTelegrafMetrics()
 	testutil.RequireMetricsEqual(t, expected, actual, options...)
+}
+
+func TestGatherTimeoutRecovers(t *testing.T) {
+	// Setup a mock server that stops replying to simulate a lost response,
+	// e.g. a network interruption to a remote chronyd (issue #16495).
+	server := Server{
+		TrackingInfo: &fbchrony.Tracking{
+			RefID:      0xA29FC87B,
+			IPAddr:     net.ParseIP("192.168.1.22"),
+			Stratum:    3,
+			LeapStatus: 0,
+			RefTime:    time.Now(),
+		},
+	}
+	addr, err := server.Listen(t)
+	require.NoError(t, err)
+	defer server.Shutdown()
+	server.silent.Store(true)
+
+	// Setup the plugin with a short timeout so the test does not wait long
+	plugin := &Chrony{
+		Server:  "udp://" + addr,
+		Timeout: config.Duration(100 * time.Millisecond),
+		Metrics: []string{"tracking"},
+		Log:     testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+	defer plugin.Stop()
+
+	// The gather must return within the timeout instead of blocking forever
+	// waiting for a reply that never arrives.
+	gatherErr := make(chan error, 1)
+	go func() {
+		gatherErr <- plugin.Gather(&acc)
+	}()
+	select {
+	case err := <-gatherErr:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "gather blocked instead of timing out")
+	}
+	require.ErrorContains(t, acc.FirstError(), "querying tracking data failed")
+	require.Empty(t, acc.GetTelegrafMetrics())
+
+	// Once the server replies again, collection must recover on the next gather
+	server.silent.Store(false)
+	var accRecovered testutil.Accumulator
+	require.NoError(t, plugin.Gather(&accRecovered))
+	require.NoError(t, accRecovered.FirstError())
+	require.NotEmpty(t, accRecovered.GetTelegrafMetrics())
 }
 
 func TestGatherServerStats(t *testing.T) {
@@ -190,7 +246,7 @@ func TestGatherServerStats(t *testing.T) {
 		metric.New(
 			"chrony_serverstats",
 			map[string]string{"source": addr},
-			map[string]interface{}{
+			map[string]any{
 				"ntp_hits":  uint64(2542),
 				"ntp_drops": uint64(42),
 				"cmd_hits":  uint64(112),
@@ -251,7 +307,7 @@ func TestGatherServerStats2(t *testing.T) {
 		metric.New(
 			"chrony_serverstats",
 			map[string]string{"source": addr},
-			map[string]interface{}{
+			map[string]any{
 				"ntp_hits":      uint64(2542),
 				"ntp_drops":     uint64(42),
 				"ntp_auth_hits": uint64(9),
@@ -318,7 +374,7 @@ func TestGatherServerStats3(t *testing.T) {
 		metric.New(
 			"chrony_serverstats",
 			map[string]string{"source": addr},
-			map[string]interface{}{
+			map[string]any{
 				"ntp_hits":             uint64(2542),
 				"ntp_drops":            uint64(42),
 				"ntp_auth_hits":        uint64(9),
@@ -428,7 +484,7 @@ func TestGatherSources(t *testing.T) {
 				"source": addr,
 				"peer":   "ntp1.my.org",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":                    0,
 				"ip":                       "192.168.0.1",
 				"poll":                     64,
@@ -449,7 +505,7 @@ func TestGatherSources(t *testing.T) {
 				"source": addr,
 				"peer":   "ntp2.my.org",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":                    1,
 				"ip":                       "192.168.0.2",
 				"poll":                     64,
@@ -470,7 +526,7 @@ func TestGatherSources(t *testing.T) {
 				"source": addr,
 				"peer":   "ntp3.my.org",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":                    2,
 				"ip":                       "192.168.0.3",
 				"poll":                     512,
@@ -578,7 +634,7 @@ func TestGatherSourceStats(t *testing.T) {
 				"peer":         "ntp1.my.org",
 				"reference_id": "19E3B986",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":              0,
 				"ip":                 "192.168.0.1",
 				"samples":            uint64(1254),
@@ -599,7 +655,7 @@ func TestGatherSourceStats(t *testing.T) {
 				"peer":         "ntp2.my.org",
 				"reference_id": "0431731B",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":              1,
 				"ip":                 "192.168.0.2",
 				"samples":            uint64(23135),
@@ -620,7 +676,7 @@ func TestGatherSourceStats(t *testing.T) {
 				"peer":         "ntp3.my.org",
 				"reference_id": "3A9EDF86",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"index":              2,
 				"ip":                 "192.168.0.3",
 				"samples":            uint64(23),
@@ -690,7 +746,7 @@ func TestIntegration(t *testing.T) {
 				"reference_id": "A29FC87B",
 				"stratum":      "4",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"frequency":       float64(0),
 				"last_offset":     float64(0),
 				"residual_freq":   float64(0),
@@ -723,10 +779,11 @@ type source struct {
 type Server struct {
 	ActivityInfo   *fbchrony.Activity
 	TrackingInfo   *fbchrony.Tracking
-	ServerStatInfo interface{}
+	ServerStatInfo any
 	SourcesInfo    []source
 
-	conn net.PacketConn
+	conn   net.PacketConn
+	silent atomic.Bool
 }
 
 func (s *Server) Shutdown() {
@@ -756,6 +813,10 @@ func (s *Server) serve(t *testing.T) {
 		n, addr, err := s.conn.ReadFrom(buf)
 		if err != nil {
 			return
+		}
+		// Simulate a lost response by draining the request without replying.
+		if s.silent.Load() {
+			continue
 		}
 		t.Logf("mock server: received %d bytes from %q\n", n, addr.String())
 
@@ -1123,4 +1184,227 @@ func encodeFloat(x float64) uint32 {
 	}
 
 	return uint32(exp<<floatCoeffBits) | uint32(coef)
+}
+
+// TestConcurrentGather verifies that concurrent Gather() calls don't cause
+// a race condition or panic when accessing the shared chrony client.
+// This test addresses the issue reported in GitHub issue #17757 where
+// concurrent access to the client caused "index out of range [256] with length 256" panics.
+func TestConcurrentGather(t *testing.T) {
+	// Setup a mock server with multiple sources to ensure longer gather time
+	server := Server{
+		ActivityInfo: &fbchrony.Activity{
+			Online:       10,
+			Offline:      2,
+			BurstOnline:  1,
+			BurstOffline: 0,
+			Unresolved:   3,
+		},
+		TrackingInfo: &fbchrony.Tracking{
+			RefID:              0xA29FC87B,
+			IPAddr:             net.ParseIP("192.168.1.22"),
+			Stratum:            3,
+			LeapStatus:         0,
+			RefTime:            time.Now(),
+			CurrentCorrection:  0.000020390,
+			LastOffset:         0.000012651,
+			RMSOffset:          0.000025577,
+			FreqPPM:            -16.001,
+			ResidFreqPPM:       0.0,
+			SkewPPM:            0.006,
+			RootDelay:          0.001655,
+			RootDispersion:     0.003307,
+			LastUpdateInterval: 507.2,
+		},
+		ServerStatInfo: &fbchrony.ServerStats{
+			NTPHits:  2542,
+			CMDHits:  112,
+			NTPDrops: 42,
+			CMDDrops: 8,
+			LogDrops: 0,
+		},
+		SourcesInfo: []source{
+			{
+				name: "ntp1.example.com",
+				data: &fbchrony.SourceData{
+					IPAddr:         net.IPv4(192, 168, 1, 1),
+					Poll:           64,
+					Stratum:        2,
+					State:          fbchrony.SourceStateSync,
+					Mode:           fbchrony.SourceModePeer,
+					Flags:          0,
+					Reachability:   255,
+					SinceSample:    0,
+					OrigLatestMeas: 0.001,
+					LatestMeas:     0.001,
+					LatestMeasErr:  0.0001,
+				},
+				stats: &fbchrony.SourceStats{
+					RefID:              434354566,
+					IPAddr:             net.IPv4(192, 168, 1, 1),
+					NSamples:           100,
+					NRuns:              10,
+					SpanSeconds:        1000,
+					StandardDeviation:  0.001,
+					ResidFreqPPM:       0.0001,
+					SkewPPM:            0.0001,
+					EstimatedOffset:    0.0001,
+					EstimatedOffsetErr: 0.00001,
+				},
+			},
+			{
+				name: "ntp2.example.com",
+				data: &fbchrony.SourceData{
+					IPAddr:         net.IPv4(192, 168, 1, 2),
+					Poll:           64,
+					Stratum:        2,
+					State:          fbchrony.SourceStateSync,
+					Mode:           fbchrony.SourceModePeer,
+					Flags:          0,
+					Reachability:   255,
+					SinceSample:    0,
+					OrigLatestMeas: 0.002,
+					LatestMeas:     0.002,
+					LatestMeasErr:  0.0002,
+				},
+				stats: &fbchrony.SourceStats{
+					RefID:              434354567,
+					IPAddr:             net.IPv4(192, 168, 1, 2),
+					NSamples:           100,
+					NRuns:              10,
+					SpanSeconds:        1000,
+					StandardDeviation:  0.002,
+					ResidFreqPPM:       0.0002,
+					SkewPPM:            0.0002,
+					EstimatedOffset:    0.0002,
+					EstimatedOffsetErr: 0.00002,
+				},
+			},
+			{
+				name: "ntp3.example.com",
+				data: &fbchrony.SourceData{
+					IPAddr:         net.IPv4(192, 168, 1, 3),
+					Poll:           64,
+					Stratum:        2,
+					State:          fbchrony.SourceStateSync,
+					Mode:           fbchrony.SourceModePeer,
+					Flags:          0,
+					Reachability:   255,
+					SinceSample:    0,
+					OrigLatestMeas: 0.003,
+					LatestMeas:     0.003,
+					LatestMeasErr:  0.0003,
+				},
+				stats: &fbchrony.SourceStats{
+					RefID:              434354568,
+					IPAddr:             net.IPv4(192, 168, 1, 3),
+					NSamples:           100,
+					NRuns:              10,
+					SpanSeconds:        1000,
+					StandardDeviation:  0.003,
+					ResidFreqPPM:       0.0003,
+					SkewPPM:            0.0003,
+					EstimatedOffset:    0.0003,
+					EstimatedOffsetErr: 0.00003,
+				},
+			},
+		},
+	}
+	addr, err := server.Listen(t)
+	require.NoError(t, err)
+	defer server.Shutdown()
+
+	// Setup the plugin with all metrics enabled to maximize the gather time
+	// and increase the likelihood of concurrent access
+	plugin := &Chrony{
+		Server:  "udp://" + addr,
+		Metrics: []string{"activity", "tracking", "serverstats", "sources", "sourcestats"},
+		Log:     testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Start(nil))
+	defer plugin.Stop()
+
+	// Run multiple concurrent Gather() calls
+	// This simulates what happens when a previous gather hasn't completed
+	// before the next interval triggers
+	const numConcurrent = 10
+	var wg sync.WaitGroup
+	errors := make(chan error, numConcurrent)
+
+	for i := range numConcurrent {
+		wg.Add(1)
+		go func(iteration int) {
+			defer wg.Done()
+
+			var acc testutil.Accumulator
+			if err := plugin.Gather(&acc); err != nil {
+				errors <- err
+				return
+			}
+
+			// Verify we got metrics (no panic occurred)
+			if len(acc.GetTelegrafMetrics()) == 0 {
+				t.Logf("iteration %d: no metrics collected", iteration)
+			}
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errors)
+
+	// Check if any errors occurred
+	for err := range errors {
+		require.NoError(t, err, "concurrent gather should not produce errors")
+	}
+}
+
+// TestRaceDetector runs the test with the Go race detector enabled.
+func TestRaceDetector(t *testing.T) {
+	// Setup a minimal mock server
+	server := Server{
+		ServerStatInfo: &fbchrony.ServerStats{
+			NTPHits:  100,
+			CMDHits:  10,
+			NTPDrops: 1,
+			CMDDrops: 0,
+			LogDrops: 0,
+		},
+	}
+	addr, err := server.Listen(t)
+	require.NoError(t, err)
+	defer server.Shutdown()
+
+	plugin := &Chrony{
+		Server:  "udp://" + addr,
+		Metrics: []string{"serverstats"},
+		Log:     testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+	require.NoError(t, plugin.Start(nil))
+	defer plugin.Stop()
+
+	// Run 100 concurrent gathers to give the race detector
+	// a better chance of catching any race conditions
+	const iterations = 100
+	var wg sync.WaitGroup
+	errors := make(chan error, iterations)
+
+	for range iterations {
+		wg.Go(func() {
+			var acc testutil.Accumulator
+			if err := plugin.Gather(&acc); err != nil {
+				errors <- err
+			}
+		})
+	}
+
+	wg.Wait()
+	close(errors)
+
+	// Check if any errors occurred
+	for err := range errors {
+		require.NoError(t, err)
+	}
 }

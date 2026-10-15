@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Azure/azure-kusto-go/kusto/ingest"
+	"github.com/Azure/azure-kusto-go/azkustoingest"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
@@ -30,7 +30,6 @@ func (*AzureDataExplorer) SampleConfig() string {
 	return sampleConfig
 }
 
-// Initialize the client and the ingestor
 func (adx *AzureDataExplorer) Init() error {
 	serializer := &json.Serializer{
 		TimestampUnits:  config.Duration(time.Nanosecond),
@@ -51,7 +50,6 @@ func (adx *AzureDataExplorer) Connect() error {
 	return nil
 }
 
-// Clean up and close the ingestor
 func (adx *AzureDataExplorer) Close() error {
 	return adx.client.Close()
 }
@@ -80,7 +78,7 @@ func (adx *AzureDataExplorer) writeTablePerMetric(metrics []telegraf.Metric) err
 	}
 
 	// Push the metrics for each table
-	format := ingest.FileFormat(ingest.JSON)
+	format := azkustoingest.FileFormat(azkustoingest.JSON)
 	for tableName, tableMetrics := range tableMetricGroups {
 		if err := adx.client.PushMetrics(format, tableName, tableMetrics); err != nil {
 			return err
@@ -102,7 +100,7 @@ func (adx *AzureDataExplorer) writeSingleTable(metrics []telegraf.Metric) error 
 	}
 
 	// push metrics to a single table
-	format := ingest.FileFormat(ingest.JSON)
+	format := azkustoingest.FileFormat(azkustoingest.JSON)
 	err := adx.client.PushMetrics(format, adx.TableName, metricsArray)
 	return err
 }
@@ -110,9 +108,8 @@ func (adx *AzureDataExplorer) writeSingleTable(metrics []telegraf.Metric) error 
 func init() {
 	outputs.Add("azure_data_explorer", func() telegraf.Output {
 		return &AzureDataExplorer{
-			Config: common_adx.Config{
-				CreateTables: true,
-				Timeout:      config.Duration(20 * time.Second)},
+			CreateTables: true,
+			Timeout:      config.Duration(20 * time.Second),
 		}
 	})
 }

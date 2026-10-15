@@ -17,7 +17,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/internal/snmp"
+	"github.com/influxdata/telegraf/plugins/common/snmp"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -89,9 +89,15 @@ func (s *SnmpTrap) Init() error {
 	}
 
 	// Setup the SNMP parameters
-	params := *gosnmp.Default
-	if s.Log.Level().Includes(telegraf.Trace) {
-		params.Logger = gosnmp.NewLogger(&logger{s.Log})
+	params := gosnmp.GoSNMP{
+		Port:               gosnmp.Default.Port,
+		Transport:          gosnmp.Default.Transport,
+		Community:          gosnmp.Default.Community,
+		Timeout:            gosnmp.Default.Timeout,
+		Retries:            gosnmp.Default.Retries,
+		ExponentialTimeout: gosnmp.Default.ExponentialTimeout,
+		MaxOids:            gosnmp.Default.MaxOids,
+		Logger:             gosnmp.NewLogger(&snmp.Logger{Logger: s.Log}),
 	}
 
 	switch s.Version {
@@ -239,10 +245,20 @@ func setTrapOid(tags map[string]string, oid string, e snmp.MibEntry) {
 
 func (s *SnmpTrap) handler(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
 	tm := time.Now()
-	fields := make(map[string]interface{}, len(packet.Variables)+1)
+	fields := make(map[string]any, len(packet.Variables)+1)
 	tags := map[string]string{
 		"version": packet.Version.String(),
 		"source":  addr.IP.String(),
+	}
+
+	if s.Log.Level().Includes(telegraf.Trace) {
+		buf, err := packet.MarshalMsg()
+		if err != nil {
+			s.Log.Debugf("marshaling message failed: %v", err)
+		} else {
+			s.Log.Tracef("raw message: %s", hex.EncodeToString(buf))
+		}
+		s.Log.Tracef("message: %s", packet.SafeString())
 	}
 
 	if packet.Version == gosnmp.Version1 {
@@ -273,7 +289,7 @@ func (s *SnmpTrap) handler(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
 	}
 
 	for _, v := range packet.Variables {
-		var value interface{}
+		var value any
 
 		// Use system mibs to resolve oids. Don't fall back to numeric oid
 		// because it's not useful enough to the end user and can be difficult

@@ -10,10 +10,9 @@ This plugin writes metrics to a [Kafka Broker][kafka] acting a Kafka Producer.
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -30,15 +29,15 @@ using the `startup_error_behavior` setting. Available values are:
 - `retry`:  Telegraf will try to startup the plugin in every gather or write
             cycle in case of startup errors. The plugin is disabled until
             the startup succeeds.
-- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
-            in case probing fails. If the plugin does not support probing, Telegraf will
-            behave as if `ignore` was set instead.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables
+            the plugin in case probing fails. If the plugin does not support
+            probing, Telegraf will behave as if `ignore` was set instead.
 
-## Secret-store support
+## Secret store support
 
-This plugin supports secrets from secret-stores for the `sasl_username`,
+This plugin supports secrets from secret stores for the `sasl_username`,
 `sasl_password` and `sasl_access_token` option.
-See the [secret-store documentation][SECRETSTORE] for more details on how
+See the [secret store documentation][SECRETSTORE] for more details on how
 to use them.
 
 [SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
@@ -57,8 +56,8 @@ to use them.
   ## Kafka topic for producer messages
   topic = "telegraf"
 
-  ## The value of this tag will be used as the topic.  If not set the 'topic'
-  ## option is used.
+  ## Tag value to be used as the topic. If not set or the tag does not exist,
+  ## the 'topic' option is used.
   # topic_tag = ""
 
   ## If true, the 'topic_tag' will be removed from to the metric.
@@ -129,14 +128,28 @@ to use them.
   ## smaller than the broker's 'message.max.bytes'.
   # max_message_bytes = 1000000
 
+  ## Timeouts bounding a produce request
+  ## All of these default to the underlying client library's defaults if unset
+  ## or zero. Lower them to detect an unresponsive broker faster, at the cost
+  ## of failing writes that a slow but healthy broker would have completed.
+  ##   net_dial_timeout:  connecting to a broker
+  ##   net_read_timeout:  waiting for a response from a broker, including the
+  ##                      acknowledgement of a produce request
+  ##   net_write_timeout: sending a request to a broker
+  ##   producer_timeout:  how long the broker waits for the number of
+  ##                      acknowledgements set by 'required_acks'
+  ## Note that a single flush may exceed these timeouts, as 'max_retry'
+  ## retries are attempted within it.
+  # net_dial_timeout = "30s"
+  # net_read_timeout = "30s"
+  # net_write_timeout = "30s"
+  # producer_timeout = "10s"
+
   ## Producer timestamp
   ## This option sets the timestamp of the kafka producer message, choose from:
   ##   * metric: Uses the metric's timestamp
   ##   * now: Uses the time of write
   # producer_timestamp = metric
-
-  ## Add metric name as specified kafka header if not empty
-  # metric_name_header = ""
 
   ## Optional TLS Config
   # enable_tls = false
@@ -164,7 +177,7 @@ to use them.
   ##   OAUTHBEARER, PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, GSSAPI, AWS-MSK-IAM
   # sasl_mechanism = ""
 
-  ## used if sasl_mechanism is GSSAPI
+  ## Used if sasl_mechanism is GSSAPI
   # sasl_gssapi_service_name = ""
   # ## One of: KRB5_USER_AUTH and KRB5_KEYTAB_AUTH
   # sasl_gssapi_auth_type = "KRB5_USER_AUTH"
@@ -176,7 +189,7 @@ to use them.
   ## Access token used if sasl_mechanism is OAUTHBEARER
   # sasl_access_token = ""
 
-  ## used if sasl_mechanism is AWS-MSK-IAM
+  ## Used if sasl_mechanism is AWS-MSK-IAM
   # sasl_aws_msk_iam_region = ""
   ## for profile based auth
   ## sasl_aws_msk_iam_profile = ""
@@ -191,7 +204,7 @@ to use them.
   ## SASL protocol version.  When connecting to Azure EventHub set to 0.
   # sasl_version = 1
 
-  # Disable Kafka metadata full fetch
+  ## Disable Kafka metadata full fetch
   # metadata_full = false
 
   ## Maximum number of retries for metadata operations including
@@ -249,6 +262,12 @@ to use them.
   #   method = "tags"
   #   keys = ["foo", "bar"]
   #   separator = "_"
+
+  ## Kafka headers to add to the message where header values accept templates
+  # [outputs.kafka.headers]
+  #   metric_name = '{{ .Name }}'
+  #   my_tag = 'foo-{{ .Tag "mytag" }}'
+  #   my_value = 'bar-{{ .Field "my" }}-{{ .Field "value" }}'
 ```
 
 ### `max_retry`
@@ -262,3 +281,18 @@ increase during downtime.
 The option is similar to the
 [retries](https://kafka.apache.org/documentation/#producerconfigs) Producer
 option in the Java Kafka Producer.
+
+### Timeouts
+
+The `net_dial_timeout`, `net_read_timeout`, `net_write_timeout` and
+`producer_timeout` options bound the individual network operations a produce
+request performs. They map to the corresponding options of the underlying
+[sarama][sarama] client, and are left at its defaults (30s for the network
+operations, 10s for the acknowledgement wait) when unset.
+
+Lowering them makes an unresponsive broker surface as a write error sooner
+instead of stalling the flush. Note that they bound the individual operations
+and not the whole write: with `max_retry` greater than `0` a single flush may
+retry, and so take longer than any one of these timeouts.
+
+[sarama]: https://github.com/IBM/sarama

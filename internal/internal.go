@@ -13,14 +13,14 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"unicode"
-
-	"github.com/influxdata/telegraf/internal/choice"
 )
 
 const alphanum string = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -31,6 +31,9 @@ var once sync.Once
 var (
 	ErrTimeout        = errors.New("command timed out")
 	ErrNotImplemented = errors.New("not implemented yet")
+
+	// Regexp for extracting the go version from runtime information
+	reGoVer = regexp.MustCompile(`go(\d+\.\d+\.\d+).*`)
 )
 
 // Set via LDFLAGS -X
@@ -70,8 +73,12 @@ func FormatFullVersion() string {
 
 // ProductToken returns a tag for Telegraf that can be used in user agents.
 func ProductToken() string {
-	return fmt.Sprintf("Telegraf/%s Go/%s",
-		Version, strings.TrimPrefix(runtime.Version(), "go"))
+	gover := strings.TrimPrefix(runtime.Version(), "go")
+	if g := reGoVer.FindStringSubmatch(runtime.Version()); len(g) == 2 {
+		gover = g[1]
+	}
+
+	return fmt.Sprintf("Telegraf/%s Go/%s", Version, gover)
 }
 
 // ReadLines reads contents from a file and splits them by new lines.
@@ -111,7 +118,7 @@ func SnakeCase(in string) string {
 	length := len(runes)
 
 	var out []rune
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if i > 0 && unicode.IsUpper(runes[i]) {
 			prevLower := unicode.IsLower(runes[i-1])
 			nextLower := i+1 < length && unicode.IsLower(runes[i+1])
@@ -191,8 +198,7 @@ func AlignTime(tm time.Time, interval time.Duration) time.Time {
 // and returns the exit status and true
 // if error is not exit status, will return 0 and false
 func ExitStatus(err error) (int, bool) {
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 			return status.ExitStatus(), true
 		}
@@ -260,7 +266,7 @@ func CompressWithGzip(data io.Reader) io.ReadCloser {
 // The location is a location string suitable for time.LoadLocation.  Unix
 // times do not use the location string, a unix time is always return in the
 // UTC location.
-func ParseTimestamp(format string, timestamp interface{}, location *time.Location, separator ...string) (time.Time, error) {
+func ParseTimestamp(format string, timestamp any, location *time.Location, separator ...string) (time.Time, error) {
 	switch format {
 	case "unix", "unix_ms", "unix_us", "unix_ns":
 		sep := []string{",", "."}
@@ -268,6 +274,14 @@ func ParseTimestamp(format string, timestamp interface{}, location *time.Locatio
 			sep = separator
 		}
 		return parseUnix(format, timestamp, sep)
+	case "timestamp_tz", "timestamp_tz_ms", "timestamp_tz_us", "timestamp_tz_ns":
+		fmtUnix := "unix" + strings.TrimPrefix(format, "timestamp_tz")
+		t, err := ParseTimestamp(fmtUnix, timestamp, location, separator...)
+		if err != nil {
+			return t, err
+		}
+		_, offset := t.In(location).Zone()
+		return t.Add(-time.Duration(offset) * time.Second), nil
 	default:
 		v, ok := timestamp.(string)
 		if !ok {
@@ -278,7 +292,7 @@ func ParseTimestamp(format string, timestamp interface{}, location *time.Locatio
 }
 
 // parseTime parses a timestamp in unix format with different resolutions
-func parseUnix(format string, timestamp interface{}, separator []string) (time.Time, error) {
+func parseUnix(format string, timestamp any, separator []string) (time.Time, error) {
 	// Extract the scaling factor to nanoseconds from "format"
 	var factor int64
 	switch format {
@@ -350,7 +364,7 @@ func sanitizeTimestamp(timestamp string, decimalSeparator []string) string {
 	// Remove thousand-separators that are not used for decimal separation
 	sanitized := timestamp
 	for _, s := range []string{" ", ",", "."} {
-		if !choice.Contains(s, decimalSeparator) {
+		if !slices.Contains(decimalSeparator, s) {
 			sanitized = strings.ReplaceAll(sanitized, s, "")
 		}
 	}

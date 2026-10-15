@@ -21,12 +21,19 @@ normal plugins:
 2. The CLI options of `--test`, `--test-wait`, and `--once` may not produce
    output for this plugin
 
+## Tracking metric support <!-- @/docs/includes/plugin_tracking_metrics.md -->
+
+This plugin supports [tracking metrics][METRICS.md], which allows the plugin
+to be notified when metrics have been delivered to all outputs, enabling proper
+acknowledgment back to the source.
+
+[METRICS.md]: ../../../docs/METRICS.md#tracking-metrics
+
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
-In addition to the plugin-specific configuration settings, plugins support
-additional global and plugin configuration settings. These settings are used to
-modify metrics, tags, and field or create aliases and configure ordering, etc.
-See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+Plugins support additional global and plugin configuration settings for tasks
+such as modifying metrics, tags, and fields, creating aliases, and configuring
+plugin ordering. See [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
@@ -43,15 +50,15 @@ using the `startup_error_behavior` setting. Available values are:
 - `retry`:  Telegraf will try to startup the plugin in every gather or write
             cycle in case of startup errors. The plugin is disabled until
             the startup succeeds.
-- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
-            in case probing fails. If the plugin does not support probing, Telegraf will
-            behave as if `ignore` was set instead.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables
+            the plugin in case probing fails. If the plugin does not support
+            probing, Telegraf will behave as if `ignore` was set instead.
 
-## Secret-store support
+## Secret store support
 
-This plugin supports secrets from secret-stores for the `username` and
+This plugin supports secrets from secret stores for the `username` and
 `password` option.
-See the [secret-store documentation][SECRETSTORE] for more details on how
+See the [secret store documentation][SECRETSTORE] for more details on how
 to use them.
 
 [SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
@@ -90,6 +97,12 @@ to use them.
 
   ## Connection timeout for initial connection in seconds
   # connection_timeout = "30s"
+
+  ## Maximum interval between reconnection attempts after a connection loss.
+  ## The MQTT library uses exponential backoff starting at 1 second up to this
+  ## ceiling. The library default is 10 minutes, which can cause long delays
+  ## before message flow resumes after a network outage.
+  # max_reconnect_interval = "30s"
 
   ## Interval and ping timeout for keep-alive messages
   ## The sum of those options defines when a connection loss is detected.
@@ -213,10 +226,8 @@ cpu,host=pop-os,tag=telegraf,topic=telegraf/one/cpu/23 value=45,test=23i 1637014
 
 ## Field Pivoting Example
 
-You can use the pivot processor to rotate single
-valued metrics into a multi field metric.
-For more info check out the pivot processors
-[here][1].
+You can use the pivot processor to rotate single valued metrics into a
+multi-field metric. For more info check out the [pivot processor][plugin_pivot].
 
 For this example these are the topics:
 
@@ -256,7 +267,7 @@ Will result in the following metric:
 sensors,site=CLE,version=v1,device_name=device5 temp=390,rpm=45.0,ph=1.45
 ```
 
-[1]: <https://github.com/influxdata/telegraf/tree/master/plugins/processors/pivot> "Pivot Processor"
+[plugin_pivot]: /plugins/processors/pivot/README.md
 
 ## Metrics
 
@@ -266,8 +277,10 @@ sensors,site=CLE,version=v1,device_name=device5 temp=390,rpm=45.0,ph=1.45
 - example when [[inputs.mqtt_consumer.topic_parsing]] is set
 
 - when [[inputs.internal]] is set:
-  - payload_size (int): get the cumulative size in bytes that have been received from incoming messages
-  - messages_received (int): count of the number of messages that have been received from mqtt
+  - payload_size (int): get the cumulative size in bytes that have been received
+                        from incoming messages
+  - messages_received (int): count of the number of messages that have been
+                            received from mqtt
 
 This will result in the following metric:
 

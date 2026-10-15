@@ -5,10 +5,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,7 +18,11 @@ import (
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/influxdata/telegraf/internal"
 )
+
+const eventID = 100
 
 func getLockedMemoryLimit() uint64 {
 	handle := windows.CurrentProcess()
@@ -94,7 +100,7 @@ func (t *Telegraf) Run() error {
 	return t.reloadLoop()
 }
 
-// Handler for the Windows service framework
+// Execute is the handler for the Windows service framework
 func (t *Telegraf) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (bool, uint32) {
 	// Mark the status as startup pending until we are fully started
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
@@ -106,20 +112,24 @@ func (t *Telegraf) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<
 	// Create a eventlog logger for  all service related things
 	svclog, err := eventlog.Open(t.serviceName)
 	if err != nil {
-		log.Printf("E! Initializing the service logger failed: %s", err)
 		return true, 1
 	}
 	defer svclog.Close()
 
+	//nolint:errcheck // We have no way to route the error to the user so ignore it
+	svclog.Info(eventID, fmt.Sprintf("Starting Telegraf %s...", internal.Version))
+
 	// Load the configuration file(s)
 	cfg, err := t.loadConfiguration()
 	if err != nil {
-		if lerr := svclog.Error(100, err.Error()); lerr != nil {
-			log.Printf("E! Logging error %q failed: %s", err, lerr)
-		}
+		//nolint:errcheck // We have no way to route the error to the user so ignore it
+		svclog.Error(eventID, err.Error())
 		return true, 2
 	}
 	t.cfg = cfg
+
+	//nolint:errcheck // We have no way to route the error to the user so ignore it
+	svclog.Info(eventID, "Finished loading configurations, starting data collection...")
 
 	// Actually start the processing loop in the background to be able to
 	// react to service change requests
@@ -132,16 +142,21 @@ func (t *Telegraf) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<
 	}()
 	changes <- svc.Status{State: svc.Running, Accepts: accepted}
 
+	//nolint:errcheck // We have no way to route the error to the user so ignore it
+	svclog.Info(eventID, "Telegraf is running...")
+
 	for {
 		select {
 		case err := <-loopErr:
 			if err != nil {
-				if lerr := svclog.Error(100, err.Error()); lerr != nil {
-					log.Printf("E! Logging error %q failed: %s", err, lerr)
-				}
+				log.Printf("E! %s", err)
+				//nolint:errcheck // We have no way to route the error to the user so ignore it
+				svclog.Error(eventID, err.Error())
 				return true, 3
 			}
-			return false, 0
+			//nolint:errcheck // We have no way to route the error to the user so ignore it
+			svclog.Info(eventID, "Stopped Telegraf")
+			return false, windows.NO_ERROR
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:
@@ -153,11 +168,12 @@ func (t *Telegraf) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<
 				changes <- svc.Status{State: svc.StopPending}
 				var empty struct{}
 				stop <- empty // signal reloadLoop to finish (context cancel)
+
+				//nolint:errcheck // We have no way to route the error to the user so ignore it
+				svclog.Info(eventID, "Stopping Telegraf...")
 			default:
-				msg := fmt.Sprintf("Unexpected control request #%d", c)
-				if lerr := svclog.Error(100, msg); lerr != nil {
-					log.Printf("E! Logging error %q failed: %s", msg, lerr)
-				}
+				//nolint:errcheck // We have no way to route the error to the user so ignore it
+				svclog.Error(eventID, fmt.Sprintf("Unexpected control request #%d", c))
 			}
 		}
 	}
@@ -246,7 +262,7 @@ func installService(name string, cfg *serviceConfig) error {
 
 	// Register the event as a source of eventlog events
 	events := uint32(eventlog.Error | eventlog.Warning | eventlog.Info)
-	if err := eventlog.InstallAsEventCreate(name, events); err != nil {
+	if err := eventlog.InstallAsEventCreate(name, events); err != nil && !strings.Contains(err.Error(), "key already exists") {
 		//nolint:errcheck // Try to remove the service on best effort basis as we cannot handle any error here
 		service.Delete()
 		return fmt.Errorf("setting up eventlog source failed: %w", err)
@@ -266,16 +282,20 @@ func uninstallService(name string) error {
 
 	service, err := svcmgr.OpenService(name)
 	if err != nil {
-		return fmt.Errorf("opening service failed: %w", err)
-	}
-	defer service.Close()
+		if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return fmt.Errorf("opening service failed: %w", err)
+		}
+	} else {
+		defer service.Close()
 
-	// Uninstall the service and remove the eventlog source
-	if err := service.Delete(); err != nil {
-		return fmt.Errorf("uninstalling service failed: %w", err)
+		// Uninstall the service
+		if err := service.Delete(); err != nil {
+			return fmt.Errorf("uninstalling service failed: %w", err)
+		}
 	}
 
-	if err := eventlog.Remove(name); err != nil {
+	// Remove the eventlog source if there is any
+	if err := eventlog.Remove(name); err != nil && !errors.Is(err, syscall.ERROR_FILE_NOT_FOUND) {
 		return fmt.Errorf("removing eventlog source failed: %w", err)
 	}
 

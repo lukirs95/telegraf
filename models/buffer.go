@@ -31,7 +31,7 @@ type Transaction struct {
 	valid bool
 
 	// Internal state that can be used by the buffer implementation
-	state interface{}
+	state any
 }
 
 func (tx *Transaction) AcceptAll() {
@@ -95,26 +95,42 @@ type BufferStats struct {
 }
 
 // NewBuffer returns a new empty Buffer with the given capacity.
-func NewBuffer(name, id, alias string, capacity int, strategy, path string) (Buffer, error) {
+//
+//nolint:revive //will move to structs later
+func NewBuffer(name, id, alias string, capacity int, strategy, path string, diskSync bool) (Buffer, error) {
 	registerGob()
 
-	bs := NewBufferStats(name, alias, capacity)
+	tags := map[string]string{
+		"_id":    id,
+		"output": name,
+	}
+	if alias != "" {
+		tags["alias"] = alias
+	}
+	bs := NewBufferStats(tags, capacity)
 
 	switch strategy {
 	case "", "memory":
 		return NewMemoryBuffer(capacity, bs)
 	case "disk_write_through":
-		return NewDiskBuffer(id, path, bs)
+		return NewDiskBuffer(id, path, bs, diskSync)
+	case "discard":
+		return newDiscardBuffer(bs), nil
 	}
 	return nil, fmt.Errorf("invalid buffer strategy %q", strategy)
 }
 
-func NewBufferStats(name, alias string, capacity int) BufferStats {
-	tags := map[string]string{"output": name}
-	if alias != "" {
-		tags["alias"] = alias
+// CheckBufferSettings verifies that the buffer settings are valid without
+// opening or allocating the buffer.
+func CheckBufferSettings(strategy string) error {
+	switch strategy {
+	case "", "memory", "disk_write_through":
+		return nil
 	}
+	return fmt.Errorf("invalid buffer strategy %q", strategy)
+}
 
+func NewBufferStats(tags map[string]string, capacity int) BufferStats {
 	bs := BufferStats{
 		MetricsAdded: selfstat.Register(
 			"write",
@@ -152,8 +168,8 @@ func NewBufferStats(name, alias string, capacity int) BufferStats {
 	return bs
 }
 
-func (b *BufferStats) metricAdded() {
-	b.MetricsAdded.Incr(1)
+func (b *BufferStats) metricAdded(count int64) {
+	b.MetricsAdded.Incr(count)
 }
 
 func (b *BufferStats) metricWritten(m telegraf.Metric) {

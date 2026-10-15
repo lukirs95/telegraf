@@ -8,7 +8,6 @@ import (
 	"math"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/config"
 )
 
 //go:embed sample_request.conf
@@ -81,17 +80,6 @@ func (c *configurationPerRequest) check() error {
 		// Check for valid optimization
 		switch def.Optimization {
 		case "", "none", "shrink", "rearrange":
-		case "aggressive":
-			config.PrintOptionValueDeprecationNotice(
-				"inputs.modbus",
-				"optimization",
-				"aggressive",
-				telegraf.DeprecationInfo{
-					Since:     "1.28.2",
-					RemovalIn: "1.30.0",
-					Notice:    `use "max_insert" instead`,
-				},
-			)
 		case "max_insert":
 			switch def.RegisterType {
 			case "coil":
@@ -245,6 +233,8 @@ func (c *configurationPerRequest) process() (map[byte]requestSet, error) {
 			params.maxBatchSize = maxQuantityCoils
 			if c.workarounds.OnRequestPerField {
 				params.maxBatchSize = 1
+			} else if c.workarounds.MaxBitRegistersPerRequest > 0 {
+				params.maxBatchSize = c.workarounds.MaxBitRegistersPerRequest
 			}
 			params.enforceFromZero = c.workarounds.ReadCoilsStartingAtZero
 			requests := groupFieldsToRequests(fields, params)
@@ -253,6 +243,8 @@ func (c *configurationPerRequest) process() (map[byte]requestSet, error) {
 			params.maxBatchSize = maxQuantityDiscreteInput
 			if c.workarounds.OnRequestPerField {
 				params.maxBatchSize = 1
+			} else if c.workarounds.MaxBitRegistersPerRequest > 0 {
+				params.maxBatchSize = c.workarounds.MaxBitRegistersPerRequest
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.discrete = append(set.discrete, requests...)
@@ -260,6 +252,8 @@ func (c *configurationPerRequest) process() (map[byte]requestSet, error) {
 			params.maxBatchSize = maxQuantityHoldingRegisters
 			if c.workarounds.OnRequestPerField {
 				params.maxBatchSize = 1
+			} else if c.workarounds.MaxWordRegistersPerRequest > 0 {
+				params.maxBatchSize = c.workarounds.MaxWordRegistersPerRequest
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.holding = append(set.holding, requests...)
@@ -267,6 +261,8 @@ func (c *configurationPerRequest) process() (map[byte]requestSet, error) {
 			params.maxBatchSize = maxQuantityInputRegisters
 			if c.workarounds.OnRequestPerField {
 				params.maxBatchSize = 1
+			} else if c.workarounds.MaxWordRegistersPerRequest > 0 {
+				params.maxBatchSize = c.workarounds.MaxWordRegistersPerRequest
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.input = append(set.input, requests...)

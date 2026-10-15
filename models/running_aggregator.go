@@ -25,7 +25,10 @@ type RunningAggregator struct {
 }
 
 func NewRunningAggregator(aggregator telegraf.Aggregator, config *AggregatorConfig) *RunningAggregator {
-	tags := map[string]string{"aggregator": config.Name}
+	tags := map[string]string{
+		"_id":        config.ID,
+		"aggregator": config.Name,
+	}
 	if config.Alias != "" {
 		tags["alias"] = config.Alias
 	}
@@ -39,6 +42,7 @@ func NewRunningAggregator(aggregator telegraf.Aggregator, config *AggregatorConf
 		logger.Error(err)
 	}
 	SetLoggerOnPlugin(aggregator, logger)
+	SetStatisticsOnPlugin(aggregator, logger, tags)
 
 	return &RunningAggregator{
 		Aggregator: aggregator,
@@ -112,6 +116,8 @@ func (r *RunningAggregator) Period() time.Duration {
 }
 
 func (r *RunningAggregator) EndPeriod() time.Time {
+	r.Lock()
+	defer r.Unlock()
 	return r.periodEnd
 }
 

@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
-	pprofileotlp "go.opentelemetry.io/proto/otlp/collector/profiles/v1experimental"
+	pprofileotlp "go.opentelemetry.io/proto/otlp/collector/profiles/v1development"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -108,13 +108,11 @@ func (o *OpenTelemetry) Start(acc telegraf.Accumulator) error {
 		return err
 	}
 
-	o.wg.Add(1)
-	go func() {
-		defer o.wg.Done()
+	o.wg.Go(func() {
 		if err := o.grpcServer.Serve(o.listener); err != nil {
 			acc.AddError(fmt.Errorf("failed to stop OpenTelemetry gRPC service: %w", err))
 		}
-	}()
+	})
 
 	return nil
 }
